@@ -1,0 +1,85 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"editor.formatOnSave": true,
+		"files.insertFinalNewline": true,
+		"files.trimFinalNewlines": true,
+		"files.trimTrailingWhitespace": true,
+		"[rust]": {
+			"editor.codeActionsOnSave": {
+				"source.organizeImports": "explicit"
+			}
+		},
+		"nix.serverPath": "./.dev/rnix-lsp/bin/rnix-lsp",
+		"nix.formatterPath": "./.dev/nixpkgs-fmt/bin/nixpkgs-fmt",
+		"rust-analyzer.cargo.sysroot": "${workspaceFolder}/.dev/rust",
+		"rust-analyzer.server.path": "${workspaceFolder}/.dev/rust/bin/rust-analyzer",
+		"rust-analyzer.runnables.command": "${workspaceFolder}/.dev/rust/bin/cargo",
+		"rust-analyzer.cargo.features": [
+			"cli"
+		],
+		"rust-analyzer.cargo.extraEnv": {
+			"PATH": "${workspaceFolder}/.dev/rust/bin:${workspaceFolder}/.dev/gcc/bin:${workspaceFolder}/.dev/pkg-config/bin",
+			"PKG_CONFIG_PATH": "${workspaceFolder}/.dev/openssl/lib/pkgconfig"
+		},
+	},
+	"launch": {
+		"version": "0.2.0",
+		"configurations": [
+			{
+				"type": "lldb",
+				"request": "launch",
+				"name": "Debug executable 'dnssync-rs'",
+				"cargo": {
+					"args": [
+						"-Z",
+						"unstable-options",
+						"-C",
+						"${workspaceFolder}",
+						"build",
+						"--bin=dnssync-rs",
+						"--package=dnssync-rs"
+					],
+					"filter": {
+						"name": "dnssync-rs",
+						"kind": "bin"
+					}
+				},
+				"args": [
+					"--dry-run"
+				],
+				"envFile": "config.env",
+				"cwd": "${workspaceFolder}"
+			},
+			{
+				"type": "lldb",
+				"request": "launch",
+				"name": "Debug unit tests in executable 'dnssync-rs'",
+				"cargo": {
+					"args": [
+						"test",
+						"--no-run",
+						"--bin=dnssync-rs",
+						"--package=dnssync-rs"
+					],
+					"filter": {
+						"name": "dnssync-rs",
+						"kind": "bin"
+					}
+				},
+				"cwd": "${workspaceFolder}/src"
+			}
+		],
+		"compounds": []
+	},
+	"extensions": {
+		"recommendations": [
+			"vadimcn.vscode-lldb",
+			"rust-lang.rust-analyzer"
+		]
+	}
+}

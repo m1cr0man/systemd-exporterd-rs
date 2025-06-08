@@ -1,0 +1,48 @@
+[package]
+name = "systemd-exporterd"
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+description = "Prometheus exporter for systemd units."
+
+[dependencies]
+zbus_systemd = { version = "0.25701", default-features = false, features = [
+    "systemd1",
+    "machine1",
+] }
+axum = { version = "0.8", features = ["tracing"] }
+clap = { version = "4.5.39", optional = true, default-features = false, features = [
+    "cargo",
+    "error-context",
+    "help",
+    "std",
+    "usage",
+] }
+config = { version = "0.14", optional = true, default-features = false, features = [
+    "convert-case",
+] }
+env_logger = { version = "0.11", optional = true }
+log = { version = "0.4", optional = true }
+pretty_env_logger = { version = "0.5", optional = true }
+serde = { version = "1", features = ["derive"] }
+snafu = { version = "0.8", features = ["rust_1_61"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio-listener = { version = "0.5.1", optional = true, features = [
+    "axum08",
+    "serde",
+    "clap",
+] }
+tracing = "0.1"
+uuid = { version = "1.10.0", features = ["v4"] }
+prometheus-client = "0.23.1"
+
+[features]
+cli = [
+    "clap",
+    "config",
+    "env_logger",
+    "log",
+    "pretty_env_logger",
+    "tracing/log",
+    "tokio-listener",
+]
