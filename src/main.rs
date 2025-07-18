@@ -1,4 +1,5 @@
 pub mod http;
+pub mod metrics;
 pub mod service;
 
 #[cfg(feature = "cli")]

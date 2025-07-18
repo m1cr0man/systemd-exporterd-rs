@@ -1,9 +1,16 @@
 use axum::Router;
-use clap::{crate_authors, crate_description, crate_version, Arg, ArgAction, Command};
+use clap::{Arg, ArgAction, Command, crate_authors, crate_description, crate_version};
+use prometheus_client::encoding::text::encode;
+use prometheus_client::registry::Registry;
 use std::env;
 use std::io::Write;
+use std::time::Duration;
 use std::{error::Error, process::exit, sync::Arc};
+use tokio::sync::RwLock;
+use tokio::task::JoinSet;
+use tokio::time::sleep;
 
+use crate::metrics::UnitMetrics;
 use crate::service::{Config, SystemdExporter};
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
@@ -26,15 +33,15 @@ fn parse_config<'a, T: serde::Deserialize<'a>>(prefix: &str) -> Result<T, Box<dy
     })
 }
 
-fn app(service: SystemdExporter) -> Router {
-    crate::http::get_router(Arc::new(service))
+fn app(recv: Arc<RwLock<String>>) -> Router {
+    crate::http::get_router(recv)
 }
 
 fn setup_logger() {
-    // Set a default level
-    if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "info")
-    }
+    // Set a default level. TODO investigate again
+    // if env::var("RUST_LOG").is_err() {
+    //     env::set_var("RUST_LOG", "info")
+    // }
 
     // Adapted from env_logger examples. <3 Systemd support
     match std::env::var("RUST_LOG_STYLE") {
@@ -57,6 +64,30 @@ fn setup_logger() {
             .init(),
         _ => pretty_env_logger::init(),
     };
+}
+
+async fn monitor(dest: Arc<RwLock<String>>, service: SystemdExporter) {
+    let mut registry = Registry::default();
+    let mut recorder = UnitMetrics::default();
+    recorder.clone().register_metrics(&mut registry);
+    let mut units = service.load_units().await.unwrap();
+    loop {
+        let mut new_units = Vec::with_capacity(units.len());
+        let mut tset = JoinSet::from_iter(units.into_iter().map(|unit| unit.collect_stats()));
+        recorder.new_batch();
+        while let Some(res) = tset.join_next().await {
+            let unit = res.unwrap().unwrap();
+            recorder.record_unit(&unit);
+            new_units.push(unit);
+        }
+        let mut buffer = String::new();
+        if let Err(err) = encode(&mut buffer, &registry) {
+            tracing::error!("Failed to encode registry: {}", err);
+        }
+        *(dest.write().await) = buffer;
+        units = new_units;
+        sleep(Duration::from_secs(5)).await;
+    }
 }
 
 pub(crate) async fn main() {
@@ -90,9 +121,10 @@ pub(crate) async fn main() {
         exit(0);
     }
 
+    let datalock = Arc::new(RwLock::default());
     let service = SystemdExporter::from(config.clone());
-
-    let app = app(service);
+    let joiner = tokio::spawn(monitor(datalock.clone(), service));
+    let app = app(datalock);
 
     // Start the web server
     let listener = tokio_listener::Listener::bind(

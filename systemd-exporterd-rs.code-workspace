@@ -11,9 +11,14 @@
 		"files.trimTrailingWhitespace": true,
 		"[rust]": {
 			"editor.codeActionsOnSave": {
+				"editor.defaultFormatter": "rust-lang.rust-analyzer",
 				"source.organizeImports": "explicit"
 			}
 		},
+		"rust-analyzer.rustfmt.extraArgs": [
+			"--config",
+			"max_width=100"
+		],
 		"nix.serverPath": "./.dev/rnix-lsp/bin/rnix-lsp",
 		"nix.formatterPath": "./.dev/nixpkgs-fmt/bin/nixpkgs-fmt",
 		"rust-analyzer.cargo.sysroot": "${workspaceFolder}/.dev/rust",
@@ -33,7 +38,7 @@
 			{
 				"type": "lldb",
 				"request": "launch",
-				"name": "Debug executable 'dnssync-rs'",
+				"name": "Debug executable 'systemd-exporterd'",
 				"cargo": {
 					"args": [
 						"-Z",
@@ -41,33 +46,33 @@
 						"-C",
 						"${workspaceFolder}",
 						"build",
-						"--bin=dnssync-rs",
-						"--package=dnssync-rs"
+						"-F",
+						"cli",
+						"--bin=systemd-exporterd",
+						"--package=systemd-exporterd"
 					],
 					"filter": {
-						"name": "dnssync-rs",
+						"name": "systemd-exporterd",
 						"kind": "bin"
 					}
 				},
-				"args": [
-					"--dry-run"
-				],
+				"args": [],
 				"envFile": "config.env",
 				"cwd": "${workspaceFolder}"
 			},
 			{
 				"type": "lldb",
 				"request": "launch",
-				"name": "Debug unit tests in executable 'dnssync-rs'",
+				"name": "Debug unit tests in executable 'systemd-exporterd'",
 				"cargo": {
 					"args": [
 						"test",
 						"--no-run",
-						"--bin=dnssync-rs",
-						"--package=dnssync-rs"
+						"--bin=systemd-exporterd",
+						"--package=systemd-exporterd"
 					],
 					"filter": {
-						"name": "dnssync-rs",
+						"name": "systemd-exporterd",
 						"kind": "bin"
 					}
 				},
