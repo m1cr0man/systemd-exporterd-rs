@@ -13,8 +13,10 @@ impl SystemdExporter {
     pub async fn load_units<'s, 'u>(&'s self) -> Result<Vec<Unit<'u>>, Error> {
         let conn = Connection::system().await?;
         let proxy = ManagerProxy::new(&conn).await?;
-        let sproxy_builder = ServiceProxy::builder(&conn);
-        let uproxy_builder = UnitProxy::builder(&conn);
+        let sproxy_builder = ServiceProxy::builder(&conn)
+            .cache_properties(zbus_systemd::zbus::proxy::CacheProperties::No);
+        let uproxy_builder = UnitProxy::builder(&conn)
+            .cache_properties(zbus_systemd::zbus::proxy::CacheProperties::No);
 
         let units = proxy.list_units().await?;
         let mut parsed_units = Vec::with_capacity(units.len());
