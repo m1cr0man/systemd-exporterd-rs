@@ -3,8 +3,8 @@ use clap::{Arg, ArgAction, Command, crate_authors, crate_description, crate_vers
 use prometheus_client::encoding::text::encode;
 use prometheus_client::registry::Registry;
 use std::env;
-use std::io::Write;
-use std::time::Duration;
+use std::io::{Write, stderr};
+use std::time::{Duration, Instant};
 use std::{error::Error, process::exit, sync::Arc};
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
@@ -67,6 +67,9 @@ fn setup_logger() {
 }
 
 async fn monitor(dest: Arc<RwLock<String>>, service: SystemdExporter) {
+    let span = tracing::span!(tracing::Level::INFO, "systemd-exporterd");
+    let _enter = span.enter();
+    tracing::info!("Monitor started");
     let mut registry = Registry::default();
     let mut recorder = UnitMetrics::default();
     recorder.clone().register_metrics(&mut registry);
@@ -75,11 +78,14 @@ async fn monitor(dest: Arc<RwLock<String>>, service: SystemdExporter) {
         let mut new_units = Vec::with_capacity(units.len());
         let mut tset = JoinSet::from_iter(units.into_iter().map(|unit| unit.collect_stats()));
         recorder.new_batch();
+        let start = Instant::now();
         while let Some(res) = tset.join_next().await {
             let unit = res.unwrap().unwrap();
             recorder.record_unit(&unit);
             new_units.push(unit);
         }
+        let end = Instant::now();
+        recorder.record_scrape(end - start);
         let mut buffer = String::new();
         if let Err(err) = encode(&mut buffer, &registry) {
             tracing::error!("Failed to encode registry: {}", err);

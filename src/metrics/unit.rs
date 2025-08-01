@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use prometheus_client::encoding::EncodeLabelSet;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
@@ -28,6 +30,8 @@ fn get_labels(unit: &crate::service::Unit) -> UnitLabels {
 
 #[derive(Default, Clone)]
 pub struct UnitMetrics {
+    pub scrape_time_us: Counter,
+    pub scrape_count: Counter,
     pub active_state: Family<StateLabels, Counter>,
     pub sub_state: Family<StateLabels, Counter>,
     pub active_ts: Family<UnitLabels, Gauge>,
@@ -64,6 +68,16 @@ pub struct UnitMetrics {
 
 impl UnitMetrics {
     pub fn register_metrics(self, registry: &mut Registry) {
+        registry.register(
+            "scrape_time_us",
+            "The time taken in microseconds to perform the scrape.",
+            self.scrape_time_us,
+        );
+        registry.register(
+            "scrape_count",
+            "The number of times scraping has been performed.",
+            self.scrape_count,
+        );
         registry.register(
             "active_state",
             "The active state of the unit (e.g., 'active', 'inactive', 'failed', 'reloading').",
@@ -282,6 +296,12 @@ impl UnitMetrics {
         if let Some(tasks_stats) = unit.tasks_stats.as_ref() {
             record_gauge(&mut self.task_count, labels, tasks_stats.count);
         }
+    }
+
+    pub fn record_scrape(&mut self, scrape_time: Duration) {
+        self.scrape_time_us
+            .inc_by(scrape_time.as_micros().try_into().unwrap_or(0));
+        self.scrape_count.inc();
     }
 }
 
