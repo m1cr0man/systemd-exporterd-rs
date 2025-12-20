@@ -3,7 +3,7 @@ use clap::{Arg, ArgAction, Command, crate_authors, crate_description, crate_vers
 use prometheus_client::encoding::text::encode;
 use prometheus_client::registry::Registry;
 use std::env;
-use std::io::{Write, stderr};
+use std::io::Write;
 use std::time::{Duration, Instant};
 use std::{error::Error, process::exit, sync::Arc};
 use tokio::sync::RwLock;
@@ -129,8 +129,7 @@ pub(crate) async fn main() {
 
     let datalock = Arc::new(RwLock::default());
     let service = SystemdExporter::from(config.clone());
-    let joiner = tokio::spawn(monitor(datalock.clone(), service));
-    let app = app(datalock);
+    let app = app(datalock.clone());
 
     // Start the web server
     let listener = tokio_listener::Listener::bind(
@@ -146,7 +145,12 @@ pub(crate) async fn main() {
     .unwrap();
 
     tracing::info!("Listening on {}", app_config.listener_address);
-    axum::serve(listener, app.into_make_service())
-        .await
-        .unwrap();
+    let joiner = tokio::spawn(async move {
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap()
+    });
+
+    monitor(datalock, service).await;
+    joiner.abort();
 }
