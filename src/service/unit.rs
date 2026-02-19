@@ -1,4 +1,7 @@
-use crate::stats::{CPUStats, IOStats, IPStats, MemoryStats, TaskStats, UnitStatus};
+use crate::{
+    cgroup::CGroup,
+    stats::{CPUStats, IOStats, IPStats, MemoryStats, TaskStats, UnitStatus},
+};
 use zbus_systemd::{
     systemd1::{ServiceProxy, UnitProxy},
     zbus::Result,
@@ -26,6 +29,7 @@ pub struct Unit<'u> {
 
     pub(super) unit_proxy: UnitProxy<'u>,
     pub(super) service_proxy: Option<ServiceProxy<'u>>,
+    pub(super) cgroup: Option<CGroup>,
 }
 
 impl<'u> Unit<'u> {
@@ -39,11 +43,14 @@ impl<'u> Unit<'u> {
         let mut collect_ip = false;
         let mut collect_cpu = false;
         let mut collect_mem = false;
+        let mut cgroup = None;
         if let Some(proxy) = service_proxy.as_ref() {
             collect_io = proxy.io_accounting().await?;
             collect_ip = proxy.ip_accounting().await?;
             collect_cpu = proxy.cpu_accounting().await?;
             collect_mem = proxy.memory_accounting().await?;
+            let cgroup_path = proxy.control_group().await?;
+            cgroup = Some(CGroup::new(&cgroup_path));
         }
         Ok(Self {
             name,
@@ -62,13 +69,14 @@ impl<'u> Unit<'u> {
             mem_stats: None,
             unit_proxy,
             service_proxy,
+            cgroup,
         })
     }
 
     pub(super) async fn collect_unit_status<'a>(mut self) -> Result<Self> {
         let proxy = &self.unit_proxy;
         let status = systemd_stats::read_unit_status(proxy).await?;
-let last_ts = self.unit_status.active_ts;
+        let last_ts = self.unit_status.active_ts;
         self.restarted = last_ts > 0 && last_ts != status.active_ts;
         self.unit_status = status;
         Ok(self)
@@ -82,20 +90,54 @@ let last_ts = self.unit_status.active_ts;
 
         self.task_stats = systemd_stats::read_task_stats(proxy).await?;
 
-        if self.collect_io {
-            self.io_stats = Some(systemd_stats::read_io_stats(proxy).await?);
-        }
-
         if self.collect_ip {
             self.ip_stats = Some(systemd_stats::read_ip_stats(proxy).await?);
         }
 
+        // Reading form systemd dbus is slow due to the deserialisation
+        // and validation of bus names.
+        // It is faster to read from the cgroupfs directly where possible,
+        // and use systemd as a fallback.
+        if self.collect_io {
+            let mut stats = None;
+            if let Some(cg) = &self.cgroup {
+                if let Ok(cg_stats) = cg.read_io_stats() {
+                    stats = Some(cg_stats);
+                }
+                // FIXME: Surface cgroup read errors as warnings
+            }
+            if let None = stats {
+                stats = Some(systemd_stats::read_io_stats(proxy).await?);
+            }
+            self.io_stats = stats;
+        }
+
         if self.collect_cpu {
-            self.cpu_stats = Some(systemd_stats::read_cpu_stats(proxy).await?);
+            let mut stats = None;
+            if let Some(cg) = &self.cgroup {
+                if let Ok(cg_stats) = cg.read_cpu_stats() {
+                    stats = Some(cg_stats);
+                }
+                // FIXME: Surface cgroup read errors as warnings
+            }
+            if let None = stats {
+                stats = Some(systemd_stats::read_cpu_stats(proxy).await?);
+            }
+            self.cpu_stats = stats;
         }
 
         if self.collect_mem {
-            self.mem_stats = Some(systemd_stats::read_memory_stats(proxy).await?);
+            let mut stats = None;
+            if let Some(cg) = &self.cgroup {
+                if let Ok(cg_stats) = cg.read_memory_stats() {
+                    stats = Some(cg_stats);
+                }
+                // FIXME: Surface cgroup read errors as warnings
+            }
+            if let None = stats {
+                stats = Some(systemd_stats::read_memory_stats(proxy).await?);
+            }
+            self.mem_stats = stats;
         }
 
         Ok(self)
