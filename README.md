@@ -4,6 +4,11 @@ Systemd-exporterd exports metrics on all systemd units on the system.
 
 - Supports systemd-nspawn aliases
 
+# TODO
+
+- Monitor user services
+- Handle services starting and stopping
+
 ## Configuration
 
 ### NixOS flake quick start

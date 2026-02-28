@@ -38,8 +38,17 @@ pub struct TaskStats {
 
 #[derive(Default)]
 pub struct UnitStatus {
+    pub job_id: u32,
     pub active_state: String,
     pub sub_state: String,
     pub active_ts: u64,
     pub inactive_ts: u64,
+}
+
+#[derive(Default)]
+pub struct ResourceStats {
+    pub ip_stats: super::IPStats,
+    pub io_stats: super::IOStats,
+    pub cpu_stats: super::CPUStats,
+    pub mem_stats: super::MemoryStats,
 }

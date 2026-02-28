@@ -1,156 +1,79 @@
-use crate::{
-    cgroup::CGroup,
-    stats::{CPUStats, IOStats, IPStats, MemoryStats, TaskStats, UnitStatus},
-};
-use zbus_systemd::{
-    systemd1::{ServiceProxy, UnitProxy},
-    zbus::Result,
+use crate::cgroup::CGroup;
+use crate::stats::{
+    ResourceStats, TaskStats, UnitStatus,
+    systemd_readers::{
+        ResourceStatsProxy, ResourceStatsReader, TaskStatsProxy, TaskStatsReader, UnitStatusReader,
+    },
 };
 
-use super::systemd_stats;
+use zbus_systemd::{systemd1::UnitProxy, zbus::Result};
 
 pub struct Unit<'u> {
     pub name: String,
     pub machine: String,
     pub identifier: String,
-    pub restarted: bool,
 
-    pub unit_status: UnitStatus,
-    pub task_stats: TaskStats,
+    pub status: UnitStatus,
 
-    pub collect_io: bool,
-    pub io_stats: Option<IOStats>,
-    pub collect_ip: bool,
-    pub ip_stats: Option<IPStats>,
-    pub collect_cpu: bool,
-    pub cpu_stats: Option<CPUStats>,
-    pub collect_mem: bool,
-    pub mem_stats: Option<MemoryStats>,
-
-    pub(super) unit_proxy: UnitProxy<'u>,
-    pub(super) service_proxy: Option<ServiceProxy<'u>>,
-    pub(super) cgroup: Option<CGroup>,
+    pub(crate) unit_proxy: UnitProxy<'u>,
+    pub(crate) task_proxy: Option<TaskStatsProxy<'u>>,
+    pub(crate) resource_proxy: Option<ResourceStatsProxy<'u>>,
+    pub(crate) cgroup: Option<CGroup>,
 }
 
 impl<'u> Unit<'u> {
-    pub(super) async fn build(
-        name: String,
-        unit_proxy: UnitProxy<'u>,
-        service_proxy: Option<ServiceProxy<'u>>,
-    ) -> Result<Self> {
+    pub(super) fn new(name: String, unit_proxy: UnitProxy<'u>) -> Self {
         let id = format!("{}@{}", name, "localhost");
-        let mut collect_io = false;
-        let mut collect_ip = false;
-        let mut collect_cpu = false;
-        let mut collect_mem = false;
-        let mut cgroup = None;
-        if let Some(proxy) = service_proxy.as_ref() {
-            collect_io = proxy.io_accounting().await?;
-            collect_ip = proxy.ip_accounting().await?;
-            collect_cpu = proxy.cpu_accounting().await?;
-            collect_mem = proxy.memory_accounting().await?;
-            let cgroup_path = proxy.control_group().await?;
-            cgroup = Some(CGroup::new(&cgroup_path));
-        }
-        Ok(Self {
+        Self {
             name,
             machine: "localhost".to_string(),
             identifier: id,
-            restarted: false,
-            unit_status: UnitStatus::default(),
-            task_stats: TaskStats::default(),
-            collect_io,
-            io_stats: None,
-            collect_ip,
-            ip_stats: None,
-            collect_cpu,
-            cpu_stats: None,
-            collect_mem,
-            mem_stats: None,
+            status: UnitStatus::default(),
             unit_proxy,
-            service_proxy,
-            cgroup,
-        })
+            task_proxy: None,
+            resource_proxy: None,
+            cgroup: None,
+        }
     }
 
-    pub(super) async fn collect_unit_status<'a>(mut self) -> Result<Self> {
-        let proxy = &self.unit_proxy;
-        let status = systemd_stats::read_unit_status(proxy).await?;
-        let last_ts = self.unit_status.active_ts;
-        self.restarted = last_ts > 0 && last_ts != status.active_ts;
-        self.unit_status = status;
-        Ok(self)
+    pub(super) fn with_resource_proxy(mut self, resource_proxy: ResourceStatsProxy<'u>) -> Self {
+        self.resource_proxy = Some(resource_proxy);
+        self
     }
 
-    pub(super) async fn collect_service_stats<'a>(mut self) -> Result<Self> {
-        let proxy = match &self.service_proxy {
-            Some(p) => p,
-            None => return Ok(self),
-        };
-
-        self.task_stats = systemd_stats::read_task_stats(proxy).await?;
-
-        if self.collect_ip {
-            self.ip_stats = Some(systemd_stats::read_ip_stats(proxy).await?);
-        }
-
-        // Reading form systemd dbus is slow due to the deserialisation
-        // and validation of bus names.
-        // It is faster to read from the cgroupfs directly where possible,
-        // and use systemd as a fallback.
-        if self.collect_io {
-            let mut stats = None;
-            if let Some(cg) = &self.cgroup {
-                if let Ok(cg_stats) = cg.read_io_stats() {
-                    stats = Some(cg_stats);
-                }
-                // FIXME: Surface cgroup read errors as warnings
-            }
-            if let None = stats {
-                stats = Some(systemd_stats::read_io_stats(proxy).await?);
-            }
-            self.io_stats = stats;
-        }
-
-        if self.collect_cpu {
-            let mut stats = None;
-            if let Some(cg) = &self.cgroup {
-                if let Ok(cg_stats) = cg.read_cpu_stats() {
-                    stats = Some(cg_stats);
-                }
-                // FIXME: Surface cgroup read errors as warnings
-            }
-            if let None = stats {
-                stats = Some(systemd_stats::read_cpu_stats(proxy).await?);
-            }
-            self.cpu_stats = stats;
-        }
-
-        if self.collect_mem {
-            let mut stats = None;
-            if let Some(cg) = &self.cgroup {
-                if let Ok(cg_stats) = cg.read_memory_stats() {
-                    stats = Some(cg_stats);
-                }
-                // FIXME: Surface cgroup read errors as warnings
-            }
-            if let None = stats {
-                stats = Some(systemd_stats::read_memory_stats(proxy).await?);
-            }
-            self.mem_stats = stats;
-        }
-
-        Ok(self)
+    pub(super) fn with_task_proxy(mut self, task_proxy: TaskStatsProxy<'u>) -> Self {
+        self.task_proxy = Some(task_proxy);
+        self
     }
 
-    pub async fn collect_stats(self) -> Result<Self> {
-        self.collect_unit_status()
-            .await?
-            .collect_service_stats()
-            .await
+    pub(super) fn with_cgroup(mut self, cgroup: CGroup) -> Self {
+        self.cgroup = Some(cgroup);
+        self
     }
 
-    pub fn is_service(&self) -> bool {
-        self.service_proxy.is_some()
+    fn running(&self) -> bool {
+        !(self.status.active_state == "inactive" || self.status.sub_state == "exited")
+    }
+
+    pub(super) async fn update_unit_status(&mut self) -> Result<()> {
+        self.status = self.unit_proxy.read_status().await?;
+        Ok(())
+    }
+
+    pub async fn collect_task_stats(&self) -> Result<TaskStats> {
+        match &self.task_proxy {
+            Some(p) => p.read_task_stats().await,
+            None => Ok(TaskStats::default()),
+        }
+    }
+
+    pub async fn collect_resource_stats(&self) -> Result<ResourceStats> {
+        if self.running()
+            && let Some(proxy) = &self.resource_proxy
+        {
+            proxy.read_resource_stats(self.cgroup.as_ref()).await
+        } else {
+            Ok(ResourceStats::default())
+        }
     }
 }

@@ -4,6 +4,8 @@ use snafu::ResultExt;
 
 use crate::stats::{CPUStats, IOStats, MemoryStats, TaskStats};
 
+const CGROUP_ROOT: &str = &"/sys/fs/cgroup";
+
 pub struct CGroup {
     path: PathBuf,
 }
@@ -11,21 +13,24 @@ pub struct CGroup {
 impl CGroup {
     pub fn new(path: &str) -> Self {
         Self {
-            path: PathBuf::from(format!("{}{}", super::constants::CGROUP_ROOT, path)),
+            path: PathBuf::from(format!("{}{}", CGROUP_ROOT, path)),
         }
     }
 
-    fn read_single_stat(&self, name: &str) -> Result<u64, super::Error> {
-        Ok(std::fs::read_to_string(self.path.join(name))
+    async fn read_single_stat(&self, name: &str) -> Result<u64, super::Error> {
+        Ok(tokio::fs::read_to_string(self.path.join(name))
+            .await
             .context(super::IOSnafu)?
+            .trim()
             .parse()
             .unwrap_or_default())
     }
 
-    pub fn read_cpu_stats(&self) -> Result<CPUStats, super::Error> {
+    pub async fn read_cpu_stats(&self) -> Result<CPUStats, super::Error> {
         let mut stats = CPUStats::default();
-        let raw_stats =
-            std::fs::read_to_string(self.path.join("cpu.stat")).context(super::IOSnafu)?;
+        let raw_stats = tokio::fs::read_to_string(self.path.join("cpu.stat"))
+            .await
+            .context(super::IOSnafu)?;
 
         // Optimising the iteration of "key value" pairs.
         // Using zip is more optimal than chunks as the tuple size is known at compile time (2)
@@ -45,19 +50,20 @@ impl CGroup {
         Ok(stats)
     }
 
-    pub fn read_memory_stats(&self) -> Result<MemoryStats, super::Error> {
+    pub async fn read_memory_stats(&self) -> Result<MemoryStats, super::Error> {
         let mut stats = MemoryStats::default();
-        stats.current = self.read_single_stat("memory.current")?;
-        stats.peak = self.read_single_stat("memory.peak")?;
-        stats.swap = self.read_single_stat("memory.swap.current")?;
-        stats.swap_peak = self.read_single_stat("memory.swap.peak")?;
+        stats.current = self.read_single_stat("memory.current").await?;
+        stats.peak = self.read_single_stat("memory.peak").await?;
+        stats.swap = self.read_single_stat("memory.swap.current").await?;
+        stats.swap_peak = self.read_single_stat("memory.swap.peak").await?;
         Ok(stats)
     }
 
-    pub fn read_io_stats(&self) -> Result<IOStats, super::Error> {
+    pub async fn read_io_stats(&self) -> Result<IOStats, super::Error> {
         let mut stats = IOStats::default();
-        let raw_stats =
-            std::fs::read_to_string(self.path.join("io.stat")).context(super::IOSnafu)?;
+        let raw_stats = tokio::fs::read_to_string(self.path.join("io.stat"))
+            .await
+            .context(super::IOSnafu)?;
 
         for line in raw_stats.split("\n") {
             let mut kvs = line.split_ascii_whitespace();
@@ -79,9 +85,9 @@ impl CGroup {
         Ok(stats)
     }
 
-    pub fn read_task_stats(&self) -> Result<TaskStats, super::Error> {
+    pub async fn read_task_stats(&self) -> Result<TaskStats, super::Error> {
         let mut stats = TaskStats::default();
-        stats.count = self.read_single_stat("pids.current")?;
+        stats.count = self.read_single_stat("pids.current").await?;
         Ok(stats)
     }
 }

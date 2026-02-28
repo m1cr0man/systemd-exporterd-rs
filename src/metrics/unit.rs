@@ -5,6 +5,7 @@ use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
+use zbus_systemd::zbus::Result;
 
 use super::record::{record_counter, record_gauge};
 
@@ -21,7 +22,7 @@ pub struct StateLabels {
     pub state: String,
 }
 
-fn get_labels(unit: &crate::service::Unit) -> UnitLabels {
+fn get_labels(unit: &crate::service::Unit<'_>) -> UnitLabels {
     UnitLabels {
         name: unit.name.clone(),
         machine: unit.machine.clone(),
@@ -39,6 +40,7 @@ pub struct UnitMetrics {
     pub start_ts: Family<UnitLabels, Gauge>,
     pub stop_ts: Family<UnitLabels, Gauge>,
     pub main_pid: Family<UnitLabels, Gauge>,
+    pub job_id: Family<UnitLabels, Gauge>,
 
     // IOStats
     pub io_read_bytes_total: Family<UnitLabels, Counter>,
@@ -196,106 +198,133 @@ impl UnitMetrics {
         self.sub_state.clear();
     }
 
-    pub fn record_unit(&mut self, unit: &crate::service::Unit) {
-        self.active_state
-            .get_or_create(&StateLabels {
-                name: unit.name.clone(),
-                machine: unit.machine.clone(),
-                state: unit.active_state.clone(),
-            })
-            .inc();
+    pub async fn record_unit<'a, 'b>(
+        &'a mut self,
+        unit: &'b crate::service::Unit<'b>,
+    ) -> Result<()> {
+        let unit_labels = &get_labels(&unit);
+        let last_job_id = self
+            .job_id
+            .get_or_create(unit_labels)
+            .set(unit.status.job_id as i64);
+        let restarted = last_job_id != (unit.status.job_id as i64);
 
-        self.sub_state
-            .get_or_create(&StateLabels {
-                name: unit.name.clone(),
-                machine: unit.machine.clone(),
-                state: unit.sub_state.clone(),
-            })
-            .inc();
+        let state_labels = StateLabels {
+            name: unit.name.clone(),
+            machine: unit.machine.clone(),
+            state: unit.status.active_state.clone(),
+        };
+        self.active_state.get_or_create(&state_labels).inc();
+        self.sub_state.get_or_create(&state_labels).inc();
 
-        let labels = &get_labels(unit);
-        record_gauge(&mut self.start_ts, labels, unit.start_ts);
-        record_gauge(&mut self.stop_ts, labels, unit.stop_ts);
-        record_gauge(&mut self.main_pid, labels, unit.main_pid.into());
+        let stats = unit.collect_task_stats().await?;
+        if stats.main_pid > 0 {
+            record_gauge(&mut self.start_ts, unit_labels, stats.start_ts);
+            record_gauge(&mut self.stop_ts, unit_labels, stats.stop_ts);
+            record_gauge(&mut self.main_pid, unit_labels, stats.main_pid.into());
+            record_gauge(&mut self.task_count, unit_labels, stats.count);
+        }
 
-        self.record_service(unit);
+        self.record_resources(unit, restarted).await?;
+
+        Ok(())
     }
 
-    fn record_service(&mut self, unit: &crate::service::Unit) {
-        if !unit.is_service() {
-            return;
-        }
-        let labels = &get_labels(unit);
-        if let Some(io_stats) = unit.io_stats.as_ref() {
+    async fn record_resources(
+        &mut self,
+        unit: &crate::service::Unit<'_>,
+        restarted: bool,
+    ) -> Result<()> {
+        let labels = &get_labels(&unit);
+        let stats = unit.collect_resource_stats().await?;
+        // You will always have some amount of read activity on any unit.
+        // If you don't, why bother recording stats?
+        if stats.io_stats.read_bytes > 0 {
             record_counter(
                 &mut self.io_read_bytes_total,
                 labels,
-                io_stats.read_bytes,
-                unit.restarted,
+                stats.io_stats.read_bytes,
+                restarted,
             );
             record_counter(
                 &mut self.io_write_bytes_total,
                 labels,
-                io_stats.write_bytes,
-                unit.restarted,
+                stats.io_stats.write_bytes,
+                restarted,
             );
             record_counter(
                 &mut self.io_read_ops_total,
                 labels,
-                io_stats.read_ops,
-                unit.restarted,
+                stats.io_stats.read_ops,
+                restarted,
             );
             record_counter(
                 &mut self.io_write_ops_total,
                 labels,
-                io_stats.write_ops,
-                unit.restarted,
+                stats.io_stats.write_ops,
+                restarted,
             );
+        } else {
+            self.io_read_bytes_total.remove(labels);
+            self.io_write_bytes_total.remove(labels);
+            self.io_read_ops_total.remove(labels);
+            self.io_write_ops_total.remove(labels);
         }
-        if let Some(ip_stats) = unit.ip_stats.as_ref() {
+        if stats.ip_stats.egress_packets > 0 {
             record_counter(
                 &mut self.ip_egress_bytes_total,
                 labels,
-                ip_stats.egress_bytes,
-                unit.restarted,
+                stats.ip_stats.egress_bytes,
+                restarted,
             );
             record_counter(
                 &mut self.ip_ingress_bytes_total,
                 labels,
-                ip_stats.ingress_bytes,
-                unit.restarted,
+                stats.ip_stats.ingress_bytes,
+                restarted,
             );
             record_counter(
                 &mut self.ip_egress_packets_total,
                 labels,
-                ip_stats.egress_packets,
-                unit.restarted,
+                stats.ip_stats.egress_packets,
+                restarted,
             );
             record_counter(
                 &mut self.ip_ingress_packets_total,
                 labels,
-                ip_stats.ingress_packets,
-                unit.restarted,
+                stats.ip_stats.ingress_packets,
+                restarted,
             );
+        } else {
+            self.ip_egress_bytes_total.remove(labels);
+            self.ip_ingress_bytes_total.remove(labels);
+            self.ip_egress_packets_total.remove(labels);
+            self.ip_ingress_packets_total.remove(labels);
         }
-        if let Some(cpu_stats) = unit.cpu_stats.as_ref() {
+        if stats.cpu_stats.usage_nsec > 0 {
             record_counter(
                 &mut self.cpu_usage_nsec_total,
                 labels,
-                cpu_stats.usage_nsec,
-                unit.restarted,
+                stats.cpu_stats.usage_nsec,
+                restarted,
             );
+        } else {
+            self.cpu_usage_nsec_total.remove(labels);
         }
-        if let Some(mem_stats) = unit.mem_stats.as_ref() {
-            record_gauge(&mut self.mem_current, labels, mem_stats.current);
-            record_gauge(&mut self.mem_available, labels, mem_stats.available);
-            record_gauge(&mut self.mem_peak, labels, mem_stats.peak);
-            record_gauge(&mut self.mem_swap, labels, mem_stats.swap);
-            record_gauge(&mut self.mem_swap_peak, labels, mem_stats.swap_peak);
+        if stats.mem_stats.current > 0 {
+            record_gauge(&mut self.mem_current, labels, stats.mem_stats.current);
+            record_gauge(&mut self.mem_available, labels, stats.mem_stats.available);
+            record_gauge(&mut self.mem_peak, labels, stats.mem_stats.peak);
+            record_gauge(&mut self.mem_swap, labels, stats.mem_stats.swap);
+            record_gauge(&mut self.mem_swap_peak, labels, stats.mem_stats.swap_peak);
+        } else {
+            self.mem_current.remove(labels);
+            self.mem_available.remove(labels);
+            self.mem_peak.remove(labels);
+            self.mem_swap.remove(labels);
+            self.mem_swap_peak.remove(labels);
         }
-        if let Some(tasks_stats) = unit.tasks_stats.as_ref() {
-            record_gauge(&mut self.task_count, labels, tasks_stats.count);
-        }
+        Ok(())
     }
 
     pub fn record_scrape(&mut self, scrape_time: Duration) {

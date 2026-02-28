@@ -115,7 +115,7 @@
           PKG_CONFIG = "${pkgs.pkg-config}/bin/pkg-config";
         };
 
-        stdenv =
+        stdenv = pkgs:
           if pkgs.stdenv.isLinux then
             pkgs.stdenvAdapters.useMoldLinker pkgs.stdenv
           else

@@ -1,4 +1,3 @@
-use axum::Router;
 use clap::{Arg, ArgAction, Command, crate_authors, crate_description, crate_version};
 use prometheus_client::encoding::text::encode;
 use prometheus_client::registry::Registry;
@@ -9,6 +8,7 @@ use std::{error::Error, process::exit, sync::Arc};
 use tokio::sync::RwLock;
 use tokio::task::JoinSet;
 use tokio::time::sleep;
+use zbus_systemd::zbus::Connection;
 
 use crate::metrics::UnitMetrics;
 use crate::service::{Config, SystemdExporter};
@@ -22,7 +22,7 @@ fn parse_config<'a, T: serde::Deserialize<'a>>(prefix: &str) -> Result<T, Box<dy
     let cfg_source = config::Config::builder()
         .add_source(
             config::Environment::with_prefix(prefix)
-                .convert_case(config::Case::ScreamingSnake)
+                .convert_case(config::Case::Snake)
                 .try_parsing(true),
         )
         .build()?;
@@ -31,10 +31,6 @@ fn parse_config<'a, T: serde::Deserialize<'a>>(prefix: &str) -> Result<T, Box<dy
         tracing::error!("Error in the provided configuration: {}", err);
         exit(2);
     })
-}
-
-fn app(recv: Arc<RwLock<String>>) -> Router {
-    crate::http::get_router(recv)
 }
 
 fn setup_logger() {
@@ -66,7 +62,7 @@ fn setup_logger() {
     };
 }
 
-async fn monitor(dest: Arc<RwLock<String>>, service: SystemdExporter) {
+async fn monitor(dest: Arc<RwLock<String>>, service: SystemdExporter<'_>) {
     let span = tracing::span!(tracing::Level::INFO, "systemd-exporterd");
     let _enter = span.enter();
     tracing::info!("Monitor started");
@@ -127,9 +123,21 @@ pub(crate) async fn main() {
         exit(0);
     }
 
-    let datalock = Arc::new(RwLock::default());
-    let service = SystemdExporter::from(config.clone());
-    let app = app(datalock.clone());
+    let mut registry = Registry::default();
+    let recorder = UnitMetrics::default();
+    recorder.clone().register_metrics(&mut registry);
+
+    let units = Arc::new(RwLock::default());
+    let app = crate::http::get_router(units.clone(), recorder, registry);
+
+    let conn = Connection::system().await.unwrap();
+    let mut service: SystemdExporter<'_> = SystemdExporter::new(&conn)
+        .await
+        .map_err(|err| {
+            tracing::error!("Failed to connect to systemd system bus: {}", err);
+            exit(2);
+        })
+        .unwrap();
 
     // Start the web server
     let listener = tokio_listener::Listener::bind(
@@ -151,6 +159,13 @@ pub(crate) async fn main() {
             .unwrap()
     });
 
-    monitor(datalock, service).await;
+    service
+        .monitor_units(units)
+        .await
+        .map_err(|err| {
+            tracing::error!("Failed to monitor units: {}", err);
+            exit(4);
+        })
+        .unwrap();
     joiner.abort();
 }
