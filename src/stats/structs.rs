@@ -1,3 +1,5 @@
+use tokio::sync::oneshot;
+
 #[derive(Default)]
 pub struct IOStats {
     pub read_bytes: u64,
@@ -36,7 +38,7 @@ pub struct TaskStats {
     pub stop_ts: u64,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct UnitStatus {
     pub job_id: u32,
     pub active_state: String,
@@ -51,4 +53,16 @@ pub struct ResourceStats {
     pub io_stats: super::IOStats,
     pub cpu_stats: super::CPUStats,
     pub mem_stats: super::MemoryStats,
+}
+
+pub struct UnitData {
+    pub name: String,
+    pub machine: String,
+    pub status: UnitStatus,
+    pub resource_stats: ResourceStats,
+    pub task_stats: TaskStats,
+}
+
+pub struct StatsRequest {
+    pub response: oneshot::Sender<Vec<UnitData>>,
 }

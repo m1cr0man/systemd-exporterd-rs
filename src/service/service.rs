@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-
 use super::{error::Error, unit::Unit};
 use crate::cgroup::CGroup;
-use crate::constants::UnitMap;
+use crate::stats::{StatsRequest, UnitData};
+use std::collections::HashMap;
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use zbus_systemd::zbus::proxy::CacheProperties;
 use zbus_systemd::zvariant::ObjectPath;
@@ -118,17 +118,15 @@ impl<'u> SystemdExporter<'u> {
 
     // This function is only responsible for building the unit objects and
     // monitoring for state changes. It is not responsible for reading the unit stats.
-    pub async fn monitor_units<'a>(&'u mut self, units: UnitMap<'a>) -> Result<(), Error>
+    pub async fn monitor_units<'a>(
+        &'u mut self,
+        mut receiver: mpsc::Receiver<StatsRequest>,
+    ) -> Result<(), Error>
     where
         'u: 'a,
     {
         // Perform an initial loading of all units.
-        // Scope controls how long the RwLock lasts.
-        {
-            let all_units = self.load_all().await?;
-            let mut umap = units.write().await;
-            *umap = all_units;
-        }
+        let mut units = self.load_all().await?;
 
         let mut receive_new = self.manager.receive_unit_new().await?;
         let mut receive_removed = self.manager.receive_unit_removed().await?;
@@ -141,19 +139,34 @@ impl<'u> SystemdExporter<'u> {
         // Add/remove/update units as appropriate.
         loop {
             tokio::select! {
+                Some(req) = receiver.recv() => {
+                    let mut results = Vec::with_capacity(units.len());
+                    for unit in units.values() {
+                        let resource_stats = unit.collect_resource_stats().await.unwrap_or_default();
+                        let task_stats = unit.collect_task_stats().await.unwrap_or_default();
+                        results.push(UnitData {
+                            name: unit.name.clone(),
+                            machine: unit.machine.clone(),
+                            status: unit.status.clone(),
+                            resource_stats,
+                            task_stats,
+                        });
+                    }
+                    let _ = req.response.send(results);
+                }
                 Some(event) = receive_new.next() => {
                     let args = event.args()?;
                     let mut unit = self.parser.parse(args.id.clone(), args.unit.into()).await?;
                     unit.update_unit_status().await?;
-                    units.write().await.insert(args.id, unit);
+                    units.insert(args.id, unit);
                 }
                 Some(event) = receive_removed.next() => {
                     let id = event.args()?.id;
-                    units.write().await.remove(&id);
+                    units.remove(&id);
                 }
                 Some(event) = receive_job_new.next() => {
                     let id = event.args()?.unit;
-                    match units.write().await.get_mut(&id) {
+                    match units.get_mut(&id) {
                         Some(unit) => {
                             unit.update_unit_status().await?;
                         },
@@ -164,7 +177,7 @@ impl<'u> SystemdExporter<'u> {
                 }
                 Some(event) = receive_job_removed.next() => {
                     let id = event.args()?.unit;
-                    match units.write().await.get_mut(&id) {
+                    match units.get_mut(&id) {
                         Some(unit) => {
                             unit.update_unit_status().await?;
                         },
@@ -177,8 +190,7 @@ impl<'u> SystemdExporter<'u> {
                     // No indication of what changed - we have to re-read all units
                     // TODO check if this overlaps with receive_new/receive_removed
                     let all_units = self.load_all().await?;
-                    let mut umap = units.write().await;
-                    *umap = all_units;
+                    units = all_units;
                 }
                 else => { break }
             };

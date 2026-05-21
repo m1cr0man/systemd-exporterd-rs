@@ -1,13 +1,9 @@
 use clap::{Arg, ArgAction, Command, crate_authors, crate_description, crate_version};
-use prometheus_client::encoding::text::encode;
 use prometheus_client::registry::Registry;
 use std::env;
 use std::io::Write;
-use std::time::{Duration, Instant};
-use std::{error::Error, process::exit, sync::Arc};
-use tokio::sync::RwLock;
-use tokio::task::JoinSet;
-use tokio::time::sleep;
+use std::{error::Error, process::exit};
+use tokio::sync::mpsc;
 use zbus_systemd::zbus::Connection;
 
 use crate::metrics::UnitMetrics;
@@ -62,36 +58,6 @@ fn setup_logger() {
     };
 }
 
-async fn monitor(dest: Arc<RwLock<String>>, service: SystemdExporter<'_>) {
-    let span = tracing::span!(tracing::Level::INFO, "systemd-exporterd");
-    let _enter = span.enter();
-    tracing::info!("Monitor started");
-    let mut registry = Registry::default();
-    let mut recorder = UnitMetrics::default();
-    recorder.clone().register_metrics(&mut registry);
-    let mut units = service.load_units().await.unwrap();
-    loop {
-        let mut new_units = Vec::with_capacity(units.len());
-        let mut tset = JoinSet::from_iter(units.into_iter().map(|unit| unit.collect_stats()));
-        recorder.new_batch();
-        let start = Instant::now();
-        while let Some(res) = tset.join_next().await {
-            let unit = res.unwrap().unwrap();
-            recorder.record_unit(&unit);
-            new_units.push(unit);
-        }
-        let end = Instant::now();
-        recorder.record_scrape(end - start);
-        let mut buffer = String::new();
-        if let Err(err) = encode(&mut buffer, &registry) {
-            tracing::error!("Failed to encode registry: {}", err);
-        }
-        *(dest.write().await) = buffer;
-        units = new_units;
-        sleep(Duration::from_secs(5)).await;
-    }
-}
-
 pub(crate) async fn main() {
     let cli = Command::new("SystemdExporter")
         .about(format!(
@@ -127,8 +93,8 @@ pub(crate) async fn main() {
     let recorder = UnitMetrics::default();
     recorder.clone().register_metrics(&mut registry);
 
-    let units = Arc::new(RwLock::default());
-    let app = crate::http::get_router(units.clone(), recorder, registry);
+    let (tx, rx) = mpsc::channel(32);
+    let app = crate::http::get_router(tx, recorder, registry);
 
     let conn = Connection::system().await.unwrap();
     let mut service: SystemdExporter<'_> = SystemdExporter::new(&conn)
@@ -160,7 +126,7 @@ pub(crate) async fn main() {
     });
 
     service
-        .monitor_units(units)
+        .monitor_units(rx)
         .await
         .map_err(|err| {
             tracing::error!("Failed to monitor units: {}", err);

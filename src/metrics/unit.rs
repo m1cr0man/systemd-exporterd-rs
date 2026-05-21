@@ -1,11 +1,11 @@
 use std::time::Duration;
 
+use crate::stats::{ResourceStats, UnitData};
 use prometheus_client::encoding::EncodeLabelSet;
 use prometheus_client::metrics::counter::Counter;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::metrics::gauge::Gauge;
 use prometheus_client::registry::Registry;
-use zbus_systemd::zbus::Result;
 
 use super::record::{record_counter, record_gauge};
 
@@ -20,13 +20,6 @@ pub struct StateLabels {
     pub name: String,
     pub machine: String,
     pub state: String,
-}
-
-fn get_labels(unit: &crate::service::Unit<'_>) -> UnitLabels {
-    UnitLabels {
-        name: unit.name.clone(),
-        machine: unit.machine.clone(),
-    }
 }
 
 #[derive(Default, Clone)]
@@ -198,51 +191,43 @@ impl UnitMetrics {
         self.sub_state.clear();
     }
 
-    pub async fn record_unit<'a, 'b>(
-        &'a mut self,
-        unit: &'b crate::service::Unit<'b>,
-    ) -> Result<()> {
-        let unit_labels = &get_labels(&unit);
+    pub fn record_unit(&mut self, data: UnitData) {
+        let unit_labels = UnitLabels {
+            name: data.name.clone(),
+            machine: data.machine.clone(),
+        };
         let last_job_id = self
             .job_id
-            .get_or_create(unit_labels)
-            .set(unit.status.job_id as i64);
-        let restarted = last_job_id != (unit.status.job_id as i64);
+            .get_or_create(&unit_labels)
+            .set(data.status.job_id as i64);
+        let restarted = last_job_id != (data.status.job_id as i64);
 
         let state_labels = StateLabels {
-            name: unit.name.clone(),
-            machine: unit.machine.clone(),
-            state: unit.status.active_state.clone(),
+            name: data.name.clone(),
+            machine: data.machine.clone(),
+            state: data.status.active_state.clone(),
         };
         self.active_state.get_or_create(&state_labels).inc();
         self.sub_state.get_or_create(&state_labels).inc();
 
-        let stats = unit.collect_task_stats().await?;
+        let stats = &data.task_stats;
         if stats.main_pid > 0 {
-            record_gauge(&mut self.start_ts, unit_labels, stats.start_ts);
-            record_gauge(&mut self.stop_ts, unit_labels, stats.stop_ts);
-            record_gauge(&mut self.main_pid, unit_labels, stats.main_pid.into());
-            record_gauge(&mut self.task_count, unit_labels, stats.count);
+            record_gauge(&mut self.start_ts, &unit_labels, stats.start_ts);
+            record_gauge(&mut self.stop_ts, &unit_labels, stats.stop_ts);
+            record_gauge(&mut self.main_pid, &unit_labels, stats.main_pid.into());
+            record_gauge(&mut self.task_count, &unit_labels, stats.count);
         }
 
-        self.record_resources(unit, restarted).await?;
-
-        Ok(())
+        self.record_resources(&unit_labels, &data.resource_stats, restarted);
     }
 
-    async fn record_resources(
-        &mut self,
-        unit: &crate::service::Unit<'_>,
-        restarted: bool,
-    ) -> Result<()> {
-        let labels = &get_labels(&unit);
-        let stats = unit.collect_resource_stats().await?;
+    fn record_resources(&mut self, labels: &UnitLabels, stats: &ResourceStats, restarted: bool) {
         // You will always have some amount of read activity on any unit.
         // If you don't, why bother recording stats?
         if stats.io_stats.read_bytes > 0 {
             record_counter(
                 &mut self.io_read_bytes_total,
-                labels,
+                &labels,
                 stats.io_stats.read_bytes,
                 restarted,
             );
@@ -324,7 +309,6 @@ impl UnitMetrics {
             self.mem_swap.remove(labels);
             self.mem_swap_peak.remove(labels);
         }
-        Ok(())
     }
 
     pub fn record_scrape(&mut self, scrape_time: Duration) {
