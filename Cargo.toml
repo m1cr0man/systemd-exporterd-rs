@@ -37,6 +37,7 @@ uuid = { version = "1.10.0", features = ["v4"] }
 prometheus-client = "0.23.1"
 enum_dispatch = "0.3.13"
 tokio-stream = "0.1.18"
+regex = "1.12.3"
 
 [features]
 cli = [

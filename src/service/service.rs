@@ -1,3 +1,4 @@
+use super::Config;
 use super::{error::Error, unit::Unit};
 use crate::cgroup::CGroup;
 use crate::stats::{StatsRequest, UnitData};
@@ -82,37 +83,70 @@ impl<'u> UnitParser<'u> {
 pub struct SystemdExporter<'u> {
     parser: UnitParser<'u>,
     manager: ManagerProxy<'u>,
+    include_filters: regex::RegexSet,
+    exclude_filters: regex::RegexSet,
 }
 
 impl<'u> SystemdExporter<'u> {
-    pub async fn new(conn: &'u Connection) -> Result<Self, Error> {
+    pub async fn new(conn: &'u Connection, config: Config) -> Result<Self, Error> {
         let parser = UnitParser::new(conn);
         let manager = ManagerProxy::new(conn).await?;
-        Ok(Self { parser, manager })
+        let include_filters = regex::RegexSet::new(config.include_filters.unwrap_or_default())
+            .expect("Invalid regex in include_filters");
+        let exclude_filters = regex::RegexSet::new(config.exclude_filters.unwrap_or_default())
+            .expect("Invalid regex in exclude_filters");
+        Ok(Self {
+            include_filters,
+            exclude_filters,
+            parser,
+            manager,
+        })
     }
 
+    #[tracing::instrument(skip(self))]
     async fn load_all<'a>(&'u self) -> Result<HashMap<String, Unit<'a>>, Error>
     where
         'u: 'a,
     {
+        tracing::debug!("Loading all units from systemd");
         let units = self.manager.list_units().await?;
         let mut all_units: HashMap<String, Unit<'a>> = Default::default();
         for (
             id,
-            _desc,
-            _load_state,
-            _active_state,
-            _sub_state,
-            _following,
+            desc,
+            load_state,
+            active_state,
+            sub_state,
+            following,
             obj_path,
-            _job_id,
+            job_id,
             _job_type,
             _job_object,
         ) in units
         {
-            let unit: Unit<'a> = self.parser.parse(id.clone(), obj_path.into()).await?;
+            let parse = (self.include_filters.is_empty() || self.include_filters.is_match(&id))
+                && !self.exclude_filters.is_match(&id);
+            if !parse {
+                continue;
+            }
+            tracing::trace!(
+                unit = %id,
+                description = %desc,
+                load_state = %load_state,
+                active_state = %active_state,
+                sub_state = %sub_state,
+                following = %following,
+                job_id = job_id,
+                "Parsing unit information"
+            );
+            let mut unit: Unit<'a> = self.parser.parse(id.clone(), obj_path.into()).await?;
+            unit.update_unit_status().await?;
             all_units.insert(id, unit);
         }
+        tracing::info!(
+            unit_count = all_units.len(),
+            "Successfully loaded all units"
+        );
         Ok(all_units)
     }
 
@@ -135,11 +169,12 @@ impl<'u> SystemdExporter<'u> {
         let mut receive_changed = self.manager.receive_unit_files_changed().await?;
         self.manager.subscribe().await?;
 
-        // Listen for dbus unit events
+        // Listen for dbus unit events and stats requests
         // Add/remove/update units as appropriate.
         loop {
             tokio::select! {
                 Some(req) = receiver.recv() => {
+                    tracing::debug!("Handling metrics scrape request");
                     let mut results = Vec::with_capacity(units.len());
                     for unit in units.values() {
                         let resource_stats = unit.collect_resource_stats().await.unwrap_or_default();
@@ -152,45 +187,51 @@ impl<'u> SystemdExporter<'u> {
                             task_stats,
                         });
                     }
+                    let count = results.len();
                     let _ = req.response.send(results);
+                    tracing::debug!(collected_units = count, "Scrape request processed");
                 }
                 Some(event) = receive_new.next() => {
                     let args = event.args()?;
+                    tracing::info!(unit = %args.id, path = %args.unit, "New unit detected");
                     let mut unit = self.parser.parse(args.id.clone(), args.unit.into()).await?;
                     unit.update_unit_status().await?;
                     units.insert(args.id, unit);
                 }
                 Some(event) = receive_removed.next() => {
-                    let id = event.args()?.id;
-                    units.remove(&id);
+                    let args = event.args()?;
+                    tracing::info!(unit = %args.id, path = %args.unit, "Unit removed");
+                    units.remove(&args.id);
                 }
                 Some(event) = receive_job_new.next() => {
-                    let id = event.args()?.unit;
-                    match units.get_mut(&id) {
+                    let args = event.args()?;
+                    match units.get_mut(&args.unit) {
                         Some(unit) => {
+                            tracing::debug!(unit = %args.unit, job_id = %args.id, "New job started for unit");
                             unit.update_unit_status().await?;
                         },
                         None => {
-                            // TODO log job event for unmonitored unit
+                            tracing::debug!(unit = %args.unit, job_id = %args.id, "Job event for unmonitored unit");
                         },
                     }
                 }
                 Some(event) = receive_job_removed.next() => {
-                    let id = event.args()?.unit;
-                    match units.get_mut(&id) {
+                    let args = event.args()?;
+                    tracing::debug!(unit = %args.unit, job_id = %args.id, result = %args.result, "Job removed for unit");
+                    match units.get_mut(&args.unit) {
                         Some(unit) => {
                             unit.update_unit_status().await?;
                         },
                         None => {
-                            // TODO log job event for unmonitored unit
+                            tracing::debug!(unit = %args.unit, job_id = %args.id, "Job event for unmonitored unit");
                         },
                     }
                 }
                 Some(_) = receive_changed.next() => {
+                    tracing::info!("Unit files changed, reloading all units");
                     // No indication of what changed - we have to re-read all units
                     // TODO check if this overlaps with receive_new/receive_removed
-                    let all_units = self.load_all().await?;
-                    units = all_units;
+                    units = self.load_all().await?;
                 }
                 else => { break }
             };

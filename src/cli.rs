@@ -97,7 +97,7 @@ pub(crate) async fn main() {
     let app = crate::http::get_router(tx, recorder, registry);
 
     let conn = Connection::system().await.unwrap();
-    let mut service: SystemdExporter<'_> = SystemdExporter::new(&conn)
+    let mut service: SystemdExporter<'_> = SystemdExporter::new(&conn, config)
         .await
         .map_err(|err| {
             tracing::error!("Failed to connect to systemd system bus: {}", err);
