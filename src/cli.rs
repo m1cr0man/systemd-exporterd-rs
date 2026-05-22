@@ -19,6 +19,9 @@ fn parse_config<'a, T: serde::Deserialize<'a>>(prefix: &str) -> Result<T, Box<dy
         .add_source(
             config::Environment::with_prefix(prefix)
                 .convert_case(config::Case::Snake)
+                .list_separator(":")
+                .with_list_parse_key("include_filters")
+                .with_list_parse_key("exclude_filters")
                 .try_parsing(true),
         )
         .build()?;
