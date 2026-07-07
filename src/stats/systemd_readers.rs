@@ -62,7 +62,7 @@ macro_rules! impl_resource_stats_reader {
                 let mut cpu_stats = None;
                 let mut mem_stats = None;
 
-                // Reading form systemd dbus is slow due to the deserialisation
+                // Reading from systemd dbus is slow due to the deserialisation
                 // and validation of bus names.
                 // It is faster to read from the cgroupfs directly where possible,
                 // and use systemd as a fallback.
