@@ -58,6 +58,7 @@ pub struct ResourceStats {
 pub struct UnitData {
     pub name: String,
     pub machine: String,
+    pub scope: String,
     pub status: UnitStatus,
     pub resource_stats: ResourceStats,
     pub task_stats: TaskStats,

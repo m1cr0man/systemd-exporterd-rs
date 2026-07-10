@@ -36,7 +36,12 @@ impl<'u> UnitParser<'u> {
         }
     }
 
-    async fn parse(&self, name: String, obj_path: ObjectPath<'u>) -> Result<Unit<'u>, Error> {
+    async fn parse(
+        &self,
+        name: String,
+        obj_path: ObjectPath<'u>,
+        scope: &str,
+    ) -> Result<Unit<'u>, Error> {
         let unit_proxy = self
             .unit_builder
             .clone()
@@ -44,7 +49,7 @@ impl<'u> UnitParser<'u> {
             .build()
             .await?;
 
-        let mut unit = Unit::new(name.clone(), unit_proxy);
+        let mut unit = Unit::new(name.clone(), scope.to_string(), unit_proxy);
 
         if name.ends_with(".service") {
             let proxy = self.service_builder.clone().path(obj_path)?.build().await?;
@@ -83,12 +88,13 @@ impl<'u> UnitParser<'u> {
 pub struct SystemdExporter<'u> {
     parser: UnitParser<'u>,
     manager: ManagerProxy<'u>,
+    scope: String,
     include_filters: regex::RegexSet,
     exclude_filters: regex::RegexSet,
 }
 
 impl<'u> SystemdExporter<'u> {
-    pub async fn new(conn: &'u Connection, config: Config) -> Result<Self, Error> {
+    pub async fn new(conn: &'u Connection, config: Config, scope: String) -> Result<Self, Error> {
         let parser = UnitParser::new(conn);
         let manager = ManagerProxy::new(conn).await?;
         let include_filters = regex::RegexSet::new(config.include_filters.unwrap_or_default())
@@ -96,6 +102,7 @@ impl<'u> SystemdExporter<'u> {
         let exclude_filters = regex::RegexSet::new(config.exclude_filters.unwrap_or_default())
             .expect("Invalid regex in exclude_filters");
         Ok(Self {
+            scope,
             include_filters,
             exclude_filters,
             parser,
@@ -103,7 +110,7 @@ impl<'u> SystemdExporter<'u> {
         })
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), fields(scope = %self.scope))]
     async fn load_all<'a>(&'u self) -> Result<HashMap<String, Unit<'a>>, Error>
     where
         'u: 'a,
@@ -139,7 +146,10 @@ impl<'u> SystemdExporter<'u> {
                 job_id = job_id,
                 "Parsing unit information"
             );
-            let mut unit: Unit<'a> = self.parser.parse(id.clone(), obj_path.into()).await?;
+            let mut unit: Unit<'a> = self
+                .parser
+                .parse(id.clone(), obj_path.into(), &self.scope)
+                .await?;
             unit.update_unit_status().await?;
             all_units.insert(id, unit);
         }
@@ -152,6 +162,7 @@ impl<'u> SystemdExporter<'u> {
 
     // This function is only responsible for building the unit objects and
     // monitoring for state changes. It is not responsible for reading the unit stats.
+    #[tracing::instrument(skip_all, fields(scope = %self.scope))]
     pub async fn monitor_units<'a>(
         &'u mut self,
         mut receiver: mpsc::Receiver<StatsRequest>,
@@ -182,6 +193,7 @@ impl<'u> SystemdExporter<'u> {
                         results.push(UnitData {
                             name: unit.name.clone(),
                             machine: unit.machine.clone(),
+                            scope: unit.scope.clone(),
                             status: unit.status.clone(),
                             resource_stats,
                             task_stats,
@@ -194,7 +206,7 @@ impl<'u> SystemdExporter<'u> {
                 Some(event) = receive_new.next() => {
                     let args = event.args()?;
                     tracing::info!(unit = %args.id, path = %args.unit, "New unit detected");
-                    let mut unit = self.parser.parse(args.id.clone(), args.unit.into()).await?;
+                    let mut unit = self.parser.parse(args.id.clone(), args.unit.into(), &self.scope).await?;
                     unit.update_unit_status().await?;
                     units.insert(args.id, unit);
                 }
@@ -238,4 +250,16 @@ impl<'u> SystemdExporter<'u> {
         }
         Ok(())
     }
+}
+
+/// Runs a systemd manager monitor loop with an owned connection.
+/// Suitable for `tokio::spawn` since the resulting future is `'static`.
+pub async fn monitor_manager(
+    conn: Connection,
+    scope: String,
+    config: Config,
+    receiver: mpsc::Receiver<StatsRequest>,
+) -> Result<(), Error> {
+    let mut exporter = SystemdExporter::new(&conn, config, scope).await?;
+    exporter.monitor_units(receiver).await
 }

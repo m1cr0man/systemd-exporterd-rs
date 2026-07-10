@@ -1636,6 +1636,7 @@ dependencies = [
  "config",
  "enum_dispatch",
  "env_logger 0.11.11",
+ "libc",
  "log",
  "pretty_env_logger",
  "prometheus-client",

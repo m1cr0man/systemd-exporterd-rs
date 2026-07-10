@@ -11,6 +11,7 @@ use zbus_systemd::{systemd1::UnitProxy, zbus::Result};
 pub struct Unit<'u> {
     pub name: String,
     pub machine: String,
+    pub scope: String,
     pub identifier: String,
 
     pub status: UnitStatus,
@@ -22,11 +23,12 @@ pub struct Unit<'u> {
 }
 
 impl<'u> Unit<'u> {
-    pub(super) fn new(name: String, unit_proxy: UnitProxy<'u>) -> Self {
+    pub(super) fn new(name: String, scope: String, unit_proxy: UnitProxy<'u>) -> Self {
         let id = format!("{}@{}", name, "localhost");
         Self {
             name,
             machine: "localhost".to_string(),
+            scope,
             identifier: id,
             status: UnitStatus::default(),
             unit_proxy,

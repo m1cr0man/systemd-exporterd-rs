@@ -13,12 +13,14 @@ use super::record::{record_counter, record_gauge};
 pub struct UnitLabels {
     pub name: String,
     pub machine: String,
+    pub scope: String,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 pub struct StateLabels {
     pub name: String,
     pub machine: String,
+    pub scope: String,
     pub state: String,
 }
 
@@ -195,6 +197,7 @@ impl UnitMetrics {
         let unit_labels = UnitLabels {
             name: data.name.clone(),
             machine: data.machine.clone(),
+            scope: data.scope.clone(),
         };
         let last_job_id = self
             .job_id
@@ -205,6 +208,7 @@ impl UnitMetrics {
         let state_labels = StateLabels {
             name: data.name.clone(),
             machine: data.machine.clone(),
+            scope: data.scope.clone(),
             state: data.status.active_state.clone(),
         };
         self.active_state.get_or_create(&state_labels).inc();

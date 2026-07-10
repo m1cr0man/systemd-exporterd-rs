@@ -9,6 +9,7 @@ description = "Prometheus exporter for systemd units."
 zbus_systemd = { version = "0.25701", default-features = false, features = [
     "systemd1",
     "machine1",
+    "login1",
 ] }
 axum = { version = "0.8", features = ["tracing"] }
 clap = { version = "4.5.39", optional = true, default-features = false, features = [
@@ -38,6 +39,7 @@ prometheus-client = "0.23.1"
 enum_dispatch = "0.3.13"
 tokio-stream = "0.1.18"
 regex = "1.12.3"
+libc = "0.2"
 
 [features]
 cli = [

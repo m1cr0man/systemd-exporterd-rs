@@ -1,13 +1,12 @@
 use clap::{Arg, ArgAction, Command, crate_authors, crate_description, crate_version};
 use prometheus_client::registry::Registry;
-use std::env;
 use std::io::Write;
 use std::{error::Error, process::exit};
 use tokio::sync::mpsc;
 use zbus_systemd::zbus::Connection;
 
 use crate::metrics::UnitMetrics;
-use crate::service::{Config, SystemdExporter};
+use crate::service::{Config, coordinator::Coordinator};
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct AppConfig {
@@ -99,14 +98,8 @@ pub(crate) async fn main() {
     let (tx, rx) = mpsc::channel(32);
     let app = crate::http::get_router(tx, recorder, registry);
 
-    let conn = Connection::system().await.unwrap();
-    let mut service: SystemdExporter<'_> = SystemdExporter::new(&conn, config)
-        .await
-        .map_err(|err| {
-            tracing::error!("Failed to connect to systemd system bus: {}", err);
-            exit(2);
-        })
-        .unwrap();
+    let system_conn = Connection::system().await.unwrap();
+    let coordinator = Coordinator::new(system_conn, config);
 
     // Start the web server
     let listener = tokio_listener::Listener::bind(
@@ -128,11 +121,11 @@ pub(crate) async fn main() {
             .unwrap()
     });
 
-    service
-        .monitor_units(rx)
+    coordinator
+        .run(rx)
         .await
         .map_err(|err| {
-            tracing::error!("Failed to monitor units: {}", err);
+            tracing::error!("Failed to run coordinator: {}", err);
             exit(4);
         })
         .unwrap();

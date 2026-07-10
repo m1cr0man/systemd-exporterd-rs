@@ -2,12 +2,7 @@
 
 Systemd-exporterd exports metrics on all systemd units on the system.
 
-- Supports systemd-nspawn aliases
-
-# TODO
-
-- Monitor user services
-- Handle services starting and stopping
+- Traverses into user sessions/managers.
 
 ## Configuration
 
@@ -105,4 +100,47 @@ so that formatting, completions etc work correctly:
 
 ```bash
 nix build --out-link .dev .#devTools
+```
+
+## Monitoring user managers
+
+Set `SDED_ENABLE_USER_MANAGERS=true` to also enumerate active users via logind
+and monitor each per-user `systemd --user` instance. Metrics from user managers
+are exported with a `scope="user@<uid>"` label; system-manager metrics carry
+`scope="system"`.
+
+The exporter connects to each user's session bus at `$XDG_RUNTIME_DIR/bus`.
+By default, the session `dbus-daemon` only accepts EXTERNAL auth from the UID
+that owns it, so root gets rejected with a broken pipe. There are two ways to
+grant root access.
+
+### Option A: seteuid fallback (automatic, no configuration)
+
+When the exporter runs as root and the initial connect fails with a broken
+pipe, it retries the connect while temporarily calling `seteuid(<target uid>)`
+so the session `dbus-daemon` sees the target user's UID via `SO_PEERCRED`.
+Root is restored immediately after the handshake. This requires no per-host
+configuration and is the default behaviour.
+
+### Option B: session-bus policy (persistent, no `seteuid`)
+
+If you'd rather have `dbus-daemon` allow root directly, drop an XML policy
+snippet at `/etc/dbus-1/session-local.conf`:
+
+```xml
+<busconfig>
+  <policy context="mandatory">
+    <allow user="root"/>
+  </policy>
+</busconfig>
+```
+
+Then reload each running session bus (`kill -HUP <dbus-daemon-pid>`) or have
+users log out and back in. After this, root can `connect()` to any
+`$XDG_RUNTIME_DIR/bus` without needing the `seteuid` fallback.
+
+Remove the file to revoke the grant:
+
+```sh
+rm /etc/dbus-1/session-local.conf
 ```
