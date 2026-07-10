@@ -1,7 +1,7 @@
 use clap::{Arg, ArgAction, Command, crate_authors, crate_description, crate_version};
 use prometheus_client::registry::Registry;
-use std::io::Write;
 use std::{error::Error, process::exit};
+use tracing_subscriber::EnvFilter;
 use tokio::sync::mpsc;
 use zbus_systemd::zbus::Connection;
 
@@ -32,32 +32,59 @@ fn parse_config<'a, T: serde::Deserialize<'a>>(prefix: &str) -> Result<T, Box<dy
 }
 
 fn setup_logger() {
-    // Set a default level. TODO investigate again
-    // if env::var("RUST_LOG").is_err() {
-    //     env::set_var("RUST_LOG", "info")
-    // }
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    // Adapted from env_logger examples. <3 Systemd support
     match std::env::var("RUST_LOG_STYLE") {
-        Ok(s) if s == "SYSTEMD" => env_logger::builder()
-            .format(|buf, record| {
-                writeln!(
-                    buf,
-                    "<{}>{}: {}",
-                    match record.level() {
-                        log::Level::Error => 3,
-                        log::Level::Warn => 4,
-                        log::Level::Info => 6,
-                        log::Level::Debug => 7,
-                        log::Level::Trace => 7,
-                    },
-                    record.target(),
-                    record.args()
-                )
-            })
+        // <3 systemd support
+        Ok(s) if s == "SYSTEMD" => tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .event_format(SystemdFormat)
             .init(),
-        _ => pretty_env_logger::init(),
+        _ => tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(true)
+            .init(),
     };
+}
+
+struct SystemdFormat;
+
+impl<S, N> tracing_subscriber::fmt::FormatEvent<S, N> for SystemdFormat
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    N: for<'a> tracing_subscriber::fmt::FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &tracing_subscriber::fmt::FmtContext<'_, S, N>,
+        mut writer: tracing_subscriber::fmt::format::Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> std::fmt::Result {
+        let meta = event.metadata();
+        let severity = match *meta.level() {
+            tracing::Level::ERROR => 3,
+            tracing::Level::WARN => 4,
+            tracing::Level::INFO => 6,
+            tracing::Level::DEBUG | tracing::Level::TRACE => 7,
+        };
+        write!(writer, "<{}>{}: ", severity, meta.target())?;
+
+        if let Some(scope) = ctx.event_scope() {
+            for span in scope.from_root() {
+                write!(writer, "{}", span.name())?;
+                let ext = span.extensions();
+                if let Some(fields) = ext.get::<tracing_subscriber::fmt::FormattedFields<N>>() {
+                    if !fields.is_empty() {
+                        write!(writer, "{{{}}}", fields)?;
+                    }
+                }
+                write!(writer, ": ")?;
+            }
+        }
+
+        ctx.field_format().format_fields(writer.by_ref(), event)?;
+        writeln!(writer)
+    }
 }
 
 pub(crate) async fn main() {
