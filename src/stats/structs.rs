@@ -47,6 +47,15 @@ pub struct UnitStatus {
     pub inactive_ts: u64,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct AccountingFlags {
+    pub cpu: bool,
+    pub memory: bool,
+    pub io: bool,
+    pub ip: bool,
+    pub tasks: bool,
+}
+
 #[derive(Default)]
 pub struct ResourceStats {
     pub ip_stats: super::IPStats,

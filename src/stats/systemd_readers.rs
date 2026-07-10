@@ -4,9 +4,7 @@ use zbus_systemd::{
     zbus::Result,
 };
 
-use super::{CPUStats, IOStats, IPStats, MemoryStats, ResourceStats, TaskStats, UnitStatus};
-
-use crate::cgroup::CGroup;
+use super::{AccountingFlags, CPUStats, IOStats, IPStats, MemoryStats, TaskStats, UnitStatus};
 
 #[enum_dispatch]
 pub trait ResourceStatsReader {
@@ -14,11 +12,7 @@ pub trait ResourceStatsReader {
     async fn read_cpu_stats(&self) -> Result<CPUStats>;
     async fn read_memory_stats(&self) -> Result<MemoryStats>;
     async fn read_ip_stats(&self) -> Result<IPStats>;
-    async fn read_resource_stats(
-        &self,
-        cgroup: Option<&CGroup>,
-        name: String,
-    ) -> Result<ResourceStats>;
+    async fn read_accounting_flags(&self) -> Result<AccountingFlags>;
 }
 
 #[enum_dispatch]
@@ -59,65 +53,13 @@ macro_rules! impl_resource_stats_reader {
                     ingress_packets: self.ip_ingress_packets().await?,
                 })
             }
-            async fn read_resource_stats(&self, cgroup: Option<&CGroup>, name: String) -> Result<ResourceStats> {
-                let ip_stats = self.read_ip_stats().await?;
-
-                let mut io_stats = None;
-                let mut cpu_stats = None;
-                let mut mem_stats = None;
-
-                // Reading from systemd dbus is slow due to the deserialisation
-                // and validation of bus names.
-                // It is faster to read from the cgroupfs directly where possible,
-                // and use systemd as a fallback.
-                if let Some(cg) = cgroup {
-                    match cg.read_io_stats().await {
-                        Ok(cg_stats) => io_stats = Some(cg_stats),
-                        Err(err) => tracing::warn!(
-                            error = %err,
-                            cgroup = %cg.to_string(),
-                            name = name,
-                            "cgroup io stats read failed; falling back to dbus",
-                        ),
-                    }
-                    match cg.read_cpu_stats().await {
-                        Ok(cg_stats) => cpu_stats = Some(cg_stats),
-                        Err(err) => tracing::warn!(
-                            error = %err,
-                            cgroup = %cg.to_string(),
-                            name = name,
-                            "cgroup cpu stats read failed; falling back to dbus",
-                        ),
-                    }
-                    match cg.read_memory_stats().await {
-                        Ok(cg_stats) => mem_stats = Some(cg_stats),
-                        Err(err) => tracing::warn!(
-                            error = %err,
-                            cgroup = %cg.to_string(),
-                            name = name,
-                            "cgroup memory stats read failed; falling back to dbus",
-                        ),
-                    }
-                }
-
-                let io_stats = match io_stats {
-                    Some(s) => s,
-                    None => self.read_io_stats().await?,
-                };
-                let cpu_stats = match cpu_stats {
-                    Some(s) => s,
-                    None => self.read_cpu_stats().await?,
-                };
-                let mem_stats = match mem_stats {
-                    Some(s) => s,
-                    None => self.read_memory_stats().await?,
-                };
-
-                Ok(ResourceStats {
-                    ip_stats,
-                    io_stats,
-                    cpu_stats,
-                    mem_stats,
+            async fn read_accounting_flags(&self) -> Result<AccountingFlags> {
+                Ok(AccountingFlags {
+                    cpu: self.cpu_accounting().await?,
+                    memory: self.memory_accounting().await?,
+                    io: self.io_accounting().await?,
+                    ip: self.ip_accounting().await?,
+                    tasks: self.tasks_accounting().await?,
                 })
             }
         })+
