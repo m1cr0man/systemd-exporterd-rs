@@ -59,12 +59,16 @@ impl Coordinator {
     }
 
     async fn handle_scrape_request(&self, req: StatsRequest) {
-        let mut all_data = Vec::new();
+        let mut receivers = Vec::with_capacity(self.senders.len());
         for sender in self.senders.values() {
             let (tx, rx) = oneshot::channel();
-            if sender.send(StatsRequest { response: tx }).await.is_ok()
-                && let Ok(data) = rx.await
-            {
+            if sender.send(StatsRequest { response: tx }).await.is_ok() {
+                receivers.push(rx);
+            }
+        }
+        let mut all_data = Vec::new();
+        for rx in receivers {
+            if let Ok(data) = rx.await {
                 all_data.extend(data);
             }
         }
