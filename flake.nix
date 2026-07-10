@@ -46,7 +46,7 @@
                 PKG_CONFIG = "${prev.pkg-config}/bin/pkg-config";
 
                 meta = with prev.lib; {
-                  description = "Network file system";
+                  description = "Systemd metric exporter";
                   homepage = "https://github.com/m1cr0man/systemd-exporterd";
                   license = licenses.mit;
                   maintainers = [ maintainers.m1cr0man ];
@@ -60,12 +60,47 @@
           inherit (lib) types mkOption;
           cfg = config.systemd-exporterd;
           esa = lib.escapeShellArg;
-          description = "Network file system";
+          description = "Systemd metric exporter";
           user = "sd-exporterd";
         in
         {
           options.systemd-exporterd = {
             enable = lib.mkEnableOption description;
+
+            listenerAddress = mkOption {
+              type = types.str;
+              default = "127.0.0.1:8080";
+              description = "Address:port the exporter's HTTP server binds to.";
+            };
+
+            monitorUserManagers = mkOption {
+              type = types.bool;
+              default = false;
+              description = ''
+                Also enumerate active users via logind and monitor each
+                per-user `systemd --user` instance.
+              '';
+            };
+
+            includeFilters = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              example = [ "\\.service$" ];
+              description = ''
+                Regex patterns; only units matching at least one pattern are
+                exported. Empty means include everything.
+              '';
+            };
+
+            excludeFilters = mkOption {
+              type = types.listOf types.str;
+              default = [ ];
+              example = [ "\\.device$" "\\.swap$" ];
+              description = ''
+                Regex patterns; units matching any pattern are dropped.
+                Applied after includeFilters.
+              '';
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -81,10 +116,16 @@
               inherit description;
               after = [ "network-online.target" "local-fs.target" ];
               wantedBy = [ "multi-user.target" ];
+              environment = {
+                SDED_LISTENER_ADDRESS = cfg.listenerAddress;
+                SDED_MONITOR_USER_MANAGERS = lib.boolToString cfg.monitorUserManagers;
+              } // lib.optionalAttrs (cfg.includeFilters != [ ]) {
+                SDED_INCLUDE_FILTERS = lib.concatStringsSep ":" cfg.includeFilters;
+              } // lib.optionalAttrs (cfg.excludeFilters != [ ]) {
+                SDED_EXCLUDE_FILTERS = lib.concatStringsSep ":" cfg.excludeFilters;
+              };
               serviceConfig = {
-                ExecStart = lib.escapeShellArgs ([
-                  "${pkgs.systemd-exporterd}/bin/systemd-exporterd"
-                ] ++ cfg.extraArgs);
+                ExecStart = "${pkgs.systemd-exporterd}/bin/systemd-exporterd";
                 RemainAfterExit = "no";
                 User = user;
                 Group = user;

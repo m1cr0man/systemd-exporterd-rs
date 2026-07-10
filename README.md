@@ -1,22 +1,18 @@
 # systemd-exporterd-rs - Prometheus exporter for systemd units
 
-Systemd-exporterd exports metrics on all systemd units on the system.
+Systemd-exporterd exports metrics on all systemd units on the system, including
+per-user `systemd --user` managers discovered via logind.
 
-- Traverses into user sessions/managers.
-
-## Configuration
+## Install + Configuration
 
 ### NixOS flake quick start
 
-systemd-exporterd was built to be used in NixOS. You can use the module exported from
-this repo's flake in your own configuration quite easily. The below snippet
-is a stripped down version of [a basic NixOS flake](https://gist.github.com/m1cr0man/8cae16037d6e779befa898bfefd36627),
-showing the important pieces.
+systemd-exporterd was built to be used in NixOS. You can use the module exported
+from this repo's flake in your own configuration quite easily.
 
 ```nix
 {
   inputs = {
-    # Extend the inputs
     systemd-exporterd.url = "github:m1cr0man/systemd-exporterd-rs";
   };
 
@@ -24,33 +20,12 @@ showing the important pieces.
     nixosConfigurations = {
       myhost = {
         modules = [
-          # Add systemd-exporterd to the module list
           systemd-exporterd.nixosModules.systemd-exporterd-with-overlay
-          # Now configure systemd-exporterd
           ({ config, ... }: {
             services.systemd-exporterd = {
               enable = true;
-              backends = {
-                headscale = {
-                  enable = true;
-                  # Domain must match or be a subdomain of some frontend
-                  domain = "ts.example.com";
-                  addUserSuffix = true;
-                  baseUrl = "https://headscale.example.com";
-                  keyFile = "/var/run/secrets/my_headscale_key";
-                };
-                # You can enable > 1 backend per instance.
-              };
-              frontends = {
-                cloudflare = {
-                  enable = true;
-                  domain = "example.com";
-                  instanceId = config.networking.hostName;
-                  # Requires Zone.DNS (DNS:Edit) permission on the domain
-                  keyFile = "/var/run/secrets/my_cloudflare_key";
-                };
-                # You can enable > 1 frontend per instance.
-              };
+              listenerAddress = "127.0.0.1:8080";
+              monitorUserManagers = true;
             };
           })
         ];
@@ -71,24 +46,18 @@ nix run github:m1cr0man/systemd-exporterd-rs -- --help
 
 ### Other distributions
 
-systemd-exporterd is configured through environment variables and CLI args. Check out
-[the example config](./config.example.env) for a list of available options.
-
-To keep API keys secure, you can specify a path to any `_API_KEY` option by
-prefixing it with an `@` symbol. systemd-exporterd will read this file at runtime.
-
-Here's some example invocations:
+systemd-exporterd is configured through environment variables and CLI args.
+Check out [the example config](./config.example.env) for a list of available
+options.
 
 ```bash
 # Compile with cargo
-cargo build . -F cli
-# Test your configuration
-$ systemd-exporterd --backends headscale,machinectl,jsonfile --frontends cloudflare --test
-# Dry run the changes
-$ systemd-exporterd --backends headscale,machinectl,jsonfile --frontends cloudflare --dry-run
-# Do DNS Sync!
-$ systemd-exporterd --backends headscale,machinectl,jsonfile --frontends cloudflare
+cargo build -F cli
+# Run the exporter
+$ systemd-exporterd --listener-address 127.0.0.1:8080
 ```
+
+Metrics are then available at `http://<listener-address>/metrics`.
 
 ## Development
 
@@ -104,7 +73,7 @@ nix build --out-link .dev .#devTools
 
 ## Monitoring user managers
 
-Set `SDED_ENABLE_USER_MANAGERS=true` to also enumerate active users via logind
+Set `SDED_MONITOR_USER_MANAGERS=true` to also enumerate active users via logind
 and monitor each per-user `systemd --user` instance. Metrics from user managers
 are exported with a `scope="user@<uid>"` label; system-manager metrics carry
 `scope="system"`.
