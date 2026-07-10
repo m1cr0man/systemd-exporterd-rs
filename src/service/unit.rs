@@ -49,7 +49,10 @@ impl<'u> Unit<'u> {
     }
 
     pub(super) fn with_cgroup(mut self, cgroup: CGroup) -> Self {
-        self.cgroup = Some(cgroup);
+        if !cgroup.is_root {
+            // We never want to use cgroups pointing to the root of cgroupfs
+            self.cgroup = Some(cgroup);
+        }
         self
     }
 
@@ -73,7 +76,9 @@ impl<'u> Unit<'u> {
         if self.running()
             && let Some(proxy) = &self.resource_proxy
         {
-            proxy.read_resource_stats(self.cgroup.as_ref()).await
+            proxy
+                .read_resource_stats(self.cgroup.as_ref(), self.name.clone())
+                .await
         } else {
             Ok(ResourceStats::default())
         }

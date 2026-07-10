@@ -14,7 +14,11 @@ pub trait ResourceStatsReader {
     async fn read_cpu_stats(&self) -> Result<CPUStats>;
     async fn read_memory_stats(&self) -> Result<MemoryStats>;
     async fn read_ip_stats(&self) -> Result<IPStats>;
-    async fn read_resource_stats(&self, cgroup: Option<&CGroup>) -> Result<ResourceStats>;
+    async fn read_resource_stats(
+        &self,
+        cgroup: Option<&CGroup>,
+        name: String,
+    ) -> Result<ResourceStats>;
 }
 
 #[enum_dispatch]
@@ -55,7 +59,7 @@ macro_rules! impl_resource_stats_reader {
                     ingress_packets: self.ip_ingress_packets().await?,
                 })
             }
-            async fn read_resource_stats(&self, cgroup: Option<&CGroup>) -> Result<ResourceStats> {
+            async fn read_resource_stats(&self, cgroup: Option<&CGroup>, name: String) -> Result<ResourceStats> {
                 let ip_stats = self.read_ip_stats().await?;
 
                 let mut io_stats = None;
@@ -67,16 +71,33 @@ macro_rules! impl_resource_stats_reader {
                 // It is faster to read from the cgroupfs directly where possible,
                 // and use systemd as a fallback.
                 if let Some(cg) = cgroup {
-                    if let Ok(cg_stats) = cg.read_io_stats().await {
-                        io_stats = Some(cg_stats);
+                    match cg.read_io_stats().await {
+                        Ok(cg_stats) => io_stats = Some(cg_stats),
+                        Err(err) => tracing::warn!(
+                            error = %err,
+                            cgroup = %cg.to_string(),
+                            name = name,
+                            "cgroup io stats read failed; falling back to dbus",
+                        ),
                     }
-                    if let Ok(cg_stats) = cg.read_cpu_stats().await {
-                        cpu_stats = Some(cg_stats);
+                    match cg.read_cpu_stats().await {
+                        Ok(cg_stats) => cpu_stats = Some(cg_stats),
+                        Err(err) => tracing::warn!(
+                            error = %err,
+                            cgroup = %cg.to_string(),
+                            name = name,
+                            "cgroup cpu stats read failed; falling back to dbus",
+                        ),
                     }
-                    if let Ok(cg_stats) = cg.read_memory_stats().await {
-                        mem_stats = Some(cg_stats);
+                    match cg.read_memory_stats().await {
+                        Ok(cg_stats) => mem_stats = Some(cg_stats),
+                        Err(err) => tracing::warn!(
+                            error = %err,
+                            cgroup = %cg.to_string(),
+                            name = name,
+                            "cgroup memory stats read failed; falling back to dbus",
+                        ),
                     }
-                    // FIXME: Surface cgroup read errors as warnings
                 }
 
                 let io_stats = match io_stats {

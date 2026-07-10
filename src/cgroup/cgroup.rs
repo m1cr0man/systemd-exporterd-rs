@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::{
+    fmt::{Debug, Display},
+    path::PathBuf,
+};
 
 use snafu::ResultExt;
 
@@ -8,12 +11,14 @@ const CGROUP_ROOT: &str = &"/sys/fs/cgroup";
 
 pub struct CGroup {
     path: PathBuf,
+    pub is_root: bool,
 }
 
 impl CGroup {
     pub fn new(path: &str) -> Self {
         Self {
             path: PathBuf::from(format!("{}{}", CGROUP_ROOT, path)),
+            is_root: path.trim_matches('/').is_empty(),
         }
     }
 
@@ -89,5 +94,11 @@ impl CGroup {
         let mut stats = TaskStats::default();
         stats.count = self.read_single_stat("pids.current").await?;
         Ok(stats)
+    }
+}
+
+impl Display for CGroup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.path.fmt(f)
     }
 }
