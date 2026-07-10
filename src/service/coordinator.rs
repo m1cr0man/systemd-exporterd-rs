@@ -79,9 +79,9 @@ impl Coordinator {
         let system_conn = Connection::system().await?;
         self.spawn_manager(system_conn, Scope::System, "system".to_string());
 
-        let enable_users = self.config.enable_user_managers.unwrap_or(false);
+        let monitor_users = self.config.monitor_user_managers.unwrap_or(false);
 
-        if enable_users {
+        if monitor_users {
             let users = list_active_users(&self.system_conn).await?;
             for user in users {
                 self.spawn_user(user).await;

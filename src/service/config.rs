@@ -2,5 +2,5 @@
 pub struct Config {
     pub include_filters: Option<Vec<String>>,
     pub exclude_filters: Option<Vec<String>>,
-    pub enable_user_managers: Option<bool>,
+    pub monitor_user_managers: Option<bool>,
 }
