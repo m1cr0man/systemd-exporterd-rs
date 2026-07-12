@@ -115,6 +115,7 @@
             systemd.services.systemd-exporterd = {
               inherit description;
               after = [ "network-online.target" "local-fs.target" ];
+              wants = [ "network-online.target" "local-fs.target" ];
               wantedBy = [ "multi-user.target" ];
               environment = {
                 SDED_LISTENER_ADDRESS = cfg.listenerAddress;
