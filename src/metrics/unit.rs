@@ -38,19 +38,19 @@ pub struct UnitMetrics {
     pub job_id: Family<UnitLabels, Gauge>,
 
     // IOStats
-    pub io_read_bytes_total: Family<UnitLabels, Counter>,
-    pub io_write_bytes_total: Family<UnitLabels, Counter>,
-    pub io_read_ops_total: Family<UnitLabels, Counter>,
-    pub io_write_ops_total: Family<UnitLabels, Counter>,
+    pub io_read_bytes: Family<UnitLabels, Counter>,
+    pub io_write_bytes: Family<UnitLabels, Counter>,
+    pub io_read_ops: Family<UnitLabels, Counter>,
+    pub io_write_ops: Family<UnitLabels, Counter>,
 
     // IPStats
-    pub ip_egress_bytes_total: Family<UnitLabels, Counter>,
-    pub ip_ingress_bytes_total: Family<UnitLabels, Counter>,
-    pub ip_egress_packets_total: Family<UnitLabels, Counter>,
-    pub ip_ingress_packets_total: Family<UnitLabels, Counter>,
+    pub ip_egress_bytes: Family<UnitLabels, Counter>,
+    pub ip_ingress_bytes: Family<UnitLabels, Counter>,
+    pub ip_egress_packets: Family<UnitLabels, Counter>,
+    pub ip_ingress_packets: Family<UnitLabels, Counter>,
 
     // CPUStats
-    pub cpu_usage_nsec_total: Family<UnitLabels, Counter>,
+    pub cpu_usage_nsec: Family<UnitLabels, Counter>,
 
     // MemoryStats
     pub mem_current: Family<UnitLabels, Gauge>,
@@ -111,49 +111,49 @@ impl UnitMetrics {
             self.main_pid,
         );
         registry.register(
-            "io_read_bytes_total",
+            "io_read_bytes",
             "The total number of bytes read by the unit.",
-            self.io_read_bytes_total,
+            self.io_read_bytes,
         );
         registry.register(
-            "io_write_bytes_total",
+            "io_write_bytes",
             "The total number of bytes written by the unit.",
-            self.io_write_bytes_total,
+            self.io_write_bytes,
         );
         registry.register(
-            "io_read_ops_total",
+            "io_read_ops",
             "The total number of read operations performed by the unit.",
-            self.io_read_ops_total,
+            self.io_read_ops,
         );
         registry.register(
-            "io_write_ops_total",
+            "io_write_ops",
             "The total number of write operations performed by the unit.",
-            self.io_write_ops_total,
+            self.io_write_ops,
         );
         registry.register(
-            "ip_egress_bytes_total",
+            "ip_egress_bytes",
             "The total number of bytes sent (egress) by the unit over the network.",
-            self.ip_egress_bytes_total,
+            self.ip_egress_bytes,
         );
         registry.register(
-            "ip_ingress_bytes_total",
+            "ip_ingress_bytes",
             "The total number of bytes received (ingress) by the unit over the network.",
-            self.ip_ingress_bytes_total,
+            self.ip_ingress_bytes,
         );
         registry.register(
-            "ip_egress_packets_total",
+            "ip_egress_packets",
             "The total number of packets sent (egress) by the unit over the network.",
-            self.ip_egress_packets_total,
+            self.ip_egress_packets,
         );
         registry.register(
-            "ip_ingress_packets_total",
+            "ip_ingress_packets",
             "The total number of packets received (ingress) by the unit over the network.",
-            self.ip_ingress_packets_total,
+            self.ip_ingress_packets,
         );
         registry.register(
-            "cpu_usage_nsec_total",
+            "cpu_usage_nsec",
             "The total CPU time used by the unit, measured in nanoseconds.",
-            self.cpu_usage_nsec_total,
+            self.cpu_usage_nsec,
         );
         registry.register(
             "mem_current",
@@ -230,75 +230,75 @@ impl UnitMetrics {
         // If you don't, why bother recording stats?
         if stats.io_stats.read_bytes > 0 {
             record_counter(
-                &mut self.io_read_bytes_total,
+                &mut self.io_read_bytes,
                 &labels,
                 stats.io_stats.read_bytes,
                 restarted,
             );
             record_counter(
-                &mut self.io_write_bytes_total,
+                &mut self.io_write_bytes,
                 labels,
                 stats.io_stats.write_bytes,
                 restarted,
             );
             record_counter(
-                &mut self.io_read_ops_total,
+                &mut self.io_read_ops,
                 labels,
                 stats.io_stats.read_ops,
                 restarted,
             );
             record_counter(
-                &mut self.io_write_ops_total,
+                &mut self.io_write_ops,
                 labels,
                 stats.io_stats.write_ops,
                 restarted,
             );
         } else {
-            self.io_read_bytes_total.remove(labels);
-            self.io_write_bytes_total.remove(labels);
-            self.io_read_ops_total.remove(labels);
-            self.io_write_ops_total.remove(labels);
+            self.io_read_bytes.remove(labels);
+            self.io_write_bytes.remove(labels);
+            self.io_read_ops.remove(labels);
+            self.io_write_ops.remove(labels);
         }
         if stats.ip_stats.egress_packets > 0 {
             record_counter(
-                &mut self.ip_egress_bytes_total,
+                &mut self.ip_egress_bytes,
                 labels,
                 stats.ip_stats.egress_bytes,
                 restarted,
             );
             record_counter(
-                &mut self.ip_ingress_bytes_total,
+                &mut self.ip_ingress_bytes,
                 labels,
                 stats.ip_stats.ingress_bytes,
                 restarted,
             );
             record_counter(
-                &mut self.ip_egress_packets_total,
+                &mut self.ip_egress_packets,
                 labels,
                 stats.ip_stats.egress_packets,
                 restarted,
             );
             record_counter(
-                &mut self.ip_ingress_packets_total,
+                &mut self.ip_ingress_packets,
                 labels,
                 stats.ip_stats.ingress_packets,
                 restarted,
             );
         } else {
-            self.ip_egress_bytes_total.remove(labels);
-            self.ip_ingress_bytes_total.remove(labels);
-            self.ip_egress_packets_total.remove(labels);
-            self.ip_ingress_packets_total.remove(labels);
+            self.ip_egress_bytes.remove(labels);
+            self.ip_ingress_bytes.remove(labels);
+            self.ip_egress_packets.remove(labels);
+            self.ip_ingress_packets.remove(labels);
         }
         if stats.cpu_stats.usage_nsec > 0 {
             record_counter(
-                &mut self.cpu_usage_nsec_total,
+                &mut self.cpu_usage_nsec,
                 labels,
                 stats.cpu_stats.usage_nsec,
                 restarted,
             );
         } else {
-            self.cpu_usage_nsec_total.remove(labels);
+            self.cpu_usage_nsec.remove(labels);
         }
         if stats.mem_stats.current > 0 {
             record_gauge(&mut self.mem_current, labels, stats.mem_stats.current);
