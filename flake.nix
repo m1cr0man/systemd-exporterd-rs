@@ -58,13 +58,13 @@
       nixosModules.systemd-exporterd = { config, pkgs, lib, ... }:
         let
           inherit (lib) types mkOption;
-          cfg = config.systemd-exporterd;
+          cfg = config.services.systemd-exporterd;
           esa = lib.escapeShellArg;
           description = "Systemd metric exporter";
           user = "sd-exporterd";
         in
         {
-          options.systemd-exporterd = {
+          options.services.systemd-exporterd = {
             enable = lib.mkEnableOption description;
 
             listenerAddress = mkOption {
