@@ -110,6 +110,11 @@ impl<'u> SystemdExporter<'u> {
         })
     }
 
+    fn should_monitor(&self, id: &str) -> bool {
+        (self.include_filters.is_empty() || self.include_filters.is_match(id))
+            && !self.exclude_filters.is_match(id)
+    }
+
     #[tracing::instrument(skip(self), fields(scope = %self.scope))]
     async fn load_all<'a>(&'u self) -> Result<HashMap<String, Unit<'a>>, Error>
     where
@@ -131,9 +136,7 @@ impl<'u> SystemdExporter<'u> {
             _job_object,
         ) in units
         {
-            let parse = (self.include_filters.is_empty() || self.include_filters.is_match(&id))
-                && !self.exclude_filters.is_match(&id);
-            if !parse {
+            if !self.should_monitor(&id) {
                 continue;
             }
             tracing::trace!(
@@ -205,6 +208,9 @@ impl<'u> SystemdExporter<'u> {
                 }
                 Some(event) = receive_new.next() => {
                     let args = event.args()?;
+                    if !self.should_monitor(&args.id) {
+                        continue;
+                    }
                     tracing::info!(unit = %args.id, path = %args.unit, "New unit detected");
                     let mut unit = self.parser.parse(args.id.clone(), args.unit.into(), &self.scope).await?;
                     unit.update_unit_status().await?;
@@ -212,11 +218,17 @@ impl<'u> SystemdExporter<'u> {
                 }
                 Some(event) = receive_removed.next() => {
                     let args = event.args()?;
+                    if !self.should_monitor(&args.id) {
+                        continue;
+                    }
                     tracing::info!(unit = %args.id, path = %args.unit, "Unit removed");
                     units.remove(&args.id);
                 }
                 Some(event) = receive_job_new.next() => {
                     let args = event.args()?;
+                    if !self.should_monitor(&args.unit) {
+                        continue;
+                    }
                     match units.get_mut(&args.unit) {
                         Some(unit) => {
                             tracing::debug!(unit = %args.unit, job_id = %args.id, "New job started for unit");
@@ -229,6 +241,9 @@ impl<'u> SystemdExporter<'u> {
                 }
                 Some(event) = receive_job_removed.next() => {
                     let args = event.args()?;
+                    if !self.should_monitor(&args.unit) {
+                        continue;
+                    }
                     tracing::debug!(unit = %args.unit, job_id = %args.id, result = %args.result, "Job removed for unit");
                     match units.get_mut(&args.unit) {
                         Some(unit) => {

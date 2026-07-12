@@ -1,6 +1,6 @@
 [package]
 name = "systemd-exporterd"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 license = "Apache-2.0"
 description = "Prometheus exporter for systemd units."
@@ -23,7 +23,10 @@ config = { version = "0.14", optional = true, default-features = false, features
     "convert-case",
 ] }
 serde = { version = "1", features = ["derive"] }
-tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", optional = true, features = [
+    "env-filter",
+    "fmt",
+] }
 snafu = { version = "0.8", features = ["rust_1_81"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs"] }
 tokio-listener = { version = "0.5.1", optional = true, features = [
@@ -40,9 +43,4 @@ regex = "1.12.3"
 libc = "0.2"
 
 [features]
-cli = [
-    "clap",
-    "config",
-    "tracing-subscriber",
-    "tokio-listener",
-]
+cli = ["clap", "config", "tracing-subscriber", "tokio-listener"]
