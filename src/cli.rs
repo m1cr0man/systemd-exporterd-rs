@@ -1,8 +1,8 @@
 use clap::{Arg, ArgAction, Command, crate_authors, crate_description, crate_version};
 use prometheus_client::registry::Registry;
 use std::{error::Error, process::exit};
-use tracing_subscriber::EnvFilter;
 use tokio::sync::mpsc;
+use tracing_subscriber::EnvFilter;
 use zbus_systemd::zbus::Connection;
 
 use crate::metrics::UnitMetrics;
@@ -118,7 +118,7 @@ pub(crate) async fn main() {
         exit(0);
     }
 
-    let mut registry = Registry::default();
+    let mut registry = Registry::with_prefix("systemd");
     let recorder = UnitMetrics::default();
     recorder.clone().register_metrics(&mut registry);
 

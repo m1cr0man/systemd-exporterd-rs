@@ -1,6 +1,6 @@
 [package]
 name = "systemd-exporterd"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 license = "Apache-2.0"
 description = "Prometheus exporter for systemd units."
