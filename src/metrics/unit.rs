@@ -191,6 +191,27 @@ impl UnitMetrics {
     pub fn new_batch(&mut self) {
         self.active_state.clear();
         self.sub_state.clear();
+        self.active_ts.clear();
+        self.inactive_ts.clear();
+        self.start_ts.clear();
+        self.stop_ts.clear();
+        self.main_pid.clear();
+        self.job_id.clear();
+        self.io_read_bytes.clear();
+        self.io_write_bytes.clear();
+        self.io_read_ops.clear();
+        self.io_write_ops.clear();
+        self.ip_egress_bytes.clear();
+        self.ip_ingress_bytes.clear();
+        self.ip_egress_packets.clear();
+        self.ip_ingress_packets.clear();
+        self.cpu_usage_nsec.clear();
+        self.mem_current.clear();
+        self.mem_available.clear();
+        self.mem_peak.clear();
+        self.mem_swap.clear();
+        self.mem_swap_peak.clear();
+        self.task_count.clear();
     }
 
     pub fn record_unit(&mut self, data: UnitData) {
@@ -199,11 +220,9 @@ impl UnitMetrics {
             machine: data.machine.clone(),
             scope: data.scope.clone(),
         };
-        let last_job_id = self
-            .job_id
+        self.job_id
             .get_or_create(&unit_labels)
             .set(data.status.job_id as i64);
-        let restarted = last_job_id != (data.status.job_id as i64);
 
         let state_labels = StateLabels {
             name: data.name.clone(),
@@ -222,96 +241,51 @@ impl UnitMetrics {
             record_gauge(&mut self.task_count, &unit_labels, stats.count);
         }
 
-        self.record_resources(&unit_labels, &data.resource_stats, restarted);
+        self.record_resources(&unit_labels, &data.resource_stats);
     }
 
-    fn record_resources(&mut self, labels: &UnitLabels, stats: &ResourceStats, restarted: bool) {
+    fn record_resources(&mut self, labels: &UnitLabels, stats: &ResourceStats) {
         // You will always have some amount of read activity on any unit.
         // If you don't, why bother recording stats?
         if stats.io_stats.read_bytes > 0 {
-            record_counter(
-                &mut self.io_read_bytes,
-                &labels,
-                stats.io_stats.read_bytes,
-                restarted,
-            );
-            record_counter(
-                &mut self.io_write_bytes,
-                labels,
-                stats.io_stats.write_bytes,
-                restarted,
-            );
-            record_counter(
-                &mut self.io_read_ops,
-                labels,
-                stats.io_stats.read_ops,
-                restarted,
-            );
-            record_counter(
-                &mut self.io_write_ops,
-                labels,
-                stats.io_stats.write_ops,
-                restarted,
-            );
-        } else {
-            self.io_read_bytes.remove(labels);
-            self.io_write_bytes.remove(labels);
-            self.io_read_ops.remove(labels);
-            self.io_write_ops.remove(labels);
+            record_counter(&mut self.io_read_bytes, labels, stats.io_stats.read_bytes);
+            record_counter(&mut self.io_write_bytes, labels, stats.io_stats.write_bytes);
+            record_counter(&mut self.io_read_ops, labels, stats.io_stats.read_ops);
+            record_counter(&mut self.io_write_ops, labels, stats.io_stats.write_ops);
         }
         if stats.ip_stats.egress_packets > 0 {
             record_counter(
                 &mut self.ip_egress_bytes,
                 labels,
                 stats.ip_stats.egress_bytes,
-                restarted,
             );
             record_counter(
                 &mut self.ip_ingress_bytes,
                 labels,
                 stats.ip_stats.ingress_bytes,
-                restarted,
             );
             record_counter(
                 &mut self.ip_egress_packets,
                 labels,
                 stats.ip_stats.egress_packets,
-                restarted,
             );
             record_counter(
                 &mut self.ip_ingress_packets,
                 labels,
                 stats.ip_stats.ingress_packets,
-                restarted,
             );
-        } else {
-            self.ip_egress_bytes.remove(labels);
-            self.ip_ingress_bytes.remove(labels);
-            self.ip_egress_packets.remove(labels);
-            self.ip_ingress_packets.remove(labels);
         }
         if stats.cpu_stats.usage_nsec > 0 {
-            record_counter(
-                &mut self.cpu_usage_nsec,
-                labels,
-                stats.cpu_stats.usage_nsec,
-                restarted,
-            );
-        } else {
-            self.cpu_usage_nsec.remove(labels);
+            record_counter(&mut self.cpu_usage_nsec, labels, stats.cpu_stats.usage_nsec);
         }
         if stats.mem_stats.current > 0 {
             record_gauge(&mut self.mem_current, labels, stats.mem_stats.current);
             record_gauge(&mut self.mem_available, labels, stats.mem_stats.available);
             record_gauge(&mut self.mem_peak, labels, stats.mem_stats.peak);
+        }
+        if stats.mem_stats.swap > 0 {
             record_gauge(&mut self.mem_swap, labels, stats.mem_stats.swap);
             record_gauge(&mut self.mem_swap_peak, labels, stats.mem_stats.swap_peak);
-        } else {
-            self.mem_current.remove(labels);
-            self.mem_available.remove(labels);
-            self.mem_peak.remove(labels);
-            self.mem_swap.remove(labels);
-            self.mem_swap_peak.remove(labels);
         }
     }
 

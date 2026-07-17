@@ -28,20 +28,6 @@ pub(super) fn record_counter<S: Clone + std::hash::Hash + Eq + Debug>(
     counter: &mut Family<S, Counter>,
     labels: &S,
     value: u64,
-    reset: bool,
 ) {
-    if reset {
-        // Reset the counter when the unit is detected to be restarted
-        counter.remove(labels);
-    }
-    let m = counter.get_or_create(labels);
-    let e = m.get();
-    if e > value {
-        println!(
-            "Counter moved backwards! labels: {:?} new: {} old: {}",
-            labels, value, e
-        );
-    } else {
-        m.inc_by(value - e);
-    }
+    counter.get_or_create(labels).inc_by(value);
 }
