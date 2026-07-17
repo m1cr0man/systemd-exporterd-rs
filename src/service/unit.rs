@@ -24,11 +24,16 @@ pub struct Unit<'u> {
 }
 
 impl<'u> Unit<'u> {
-    pub(super) fn new(name: String, scope: String, unit_proxy: UnitProxy<'u>) -> Self {
-        let id = format!("{}@{}", name, "localhost");
+    pub(super) fn new(
+        name: String,
+        machine: String,
+        scope: String,
+        unit_proxy: UnitProxy<'u>,
+    ) -> Self {
+        let id = format!("{}@{}", name, machine);
         Self {
             name,
-            machine: "localhost".to_string(),
+            machine,
             scope,
             identifier: id,
             status: UnitStatus::default(),

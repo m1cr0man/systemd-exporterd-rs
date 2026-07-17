@@ -14,7 +14,25 @@ use zbus_systemd::{
     zbus::Connection,
 };
 
+fn read_hostname() -> String {
+    let mut buf = [0u8; 256];
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+    if rc != 0 {
+        tracing::warn!("gethostname failed; falling back to \"localhost\"");
+        return "localhost".to_string();
+    }
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    match std::str::from_utf8(&buf[..end]) {
+        Ok(s) if !s.is_empty() => s.to_string(),
+        _ => {
+            tracing::warn!("hostname was empty or invalid UTF-8; falling back to \"localhost\"");
+            "localhost".to_string()
+        }
+    }
+}
+
 struct UnitParser<'u> {
+    machine: String,
     unit_builder: zbus_systemd::zbus::proxy::Builder<'u, UnitProxy<'u>>,
     service_builder: zbus_systemd::zbus::proxy::Builder<'u, ServiceProxy<'u>>,
     slice_builder: zbus_systemd::zbus::proxy::Builder<'u, SliceProxy<'u>>,
@@ -24,9 +42,10 @@ struct UnitParser<'u> {
 }
 
 impl<'u> UnitParser<'u> {
-    fn new(conn: &'u Connection) -> Self {
+    fn new(conn: &'u Connection, machine: String) -> Self {
         let cache = CacheProperties::No;
         Self {
+            machine,
             unit_builder: UnitProxy::builder(conn).cache_properties(cache),
             service_builder: ServiceProxy::builder(conn).cache_properties(cache),
             slice_builder: SliceProxy::builder(conn).cache_properties(cache),
@@ -49,7 +68,12 @@ impl<'u> UnitParser<'u> {
             .build()
             .await?;
 
-        let mut unit = Unit::new(name.clone(), scope.to_string(), unit_proxy);
+        let mut unit = Unit::new(
+            name.clone(),
+            self.machine.clone(),
+            scope.to_string(),
+            unit_proxy,
+        );
 
         if name.ends_with(".service") {
             let proxy = self.service_builder.clone().path(obj_path)?.build().await?;
@@ -95,7 +119,7 @@ pub struct SystemdExporter<'u> {
 
 impl<'u> SystemdExporter<'u> {
     pub async fn new(conn: &'u Connection, config: Config, scope: String) -> Result<Self, Error> {
-        let parser = UnitParser::new(conn);
+        let parser = UnitParser::new(conn, read_hostname());
         let manager = ManagerProxy::new(conn).await?;
         let include_filters = regex::RegexSet::new(config.include_filters.unwrap_or_default())
             .expect("Invalid regex in include_filters");
