@@ -61,7 +61,6 @@
           cfg = config.services.systemd-exporterd;
           esa = lib.escapeShellArg;
           description = "Systemd metric exporter";
-          user = "sd-exporterd";
         in
         {
           options.services.systemd-exporterd = {
@@ -104,14 +103,6 @@
           };
 
           config = lib.mkIf cfg.enable {
-            users.users."${user}" = {
-              group = user;
-              home = "/var/empty";
-              createHome = false;
-              isSystemUser = true;
-            };
-            users.groups."${user}" = { };
-
             systemd.services.systemd-exporterd = {
               inherit description;
               after = [ "network-online.target" "local-fs.target" ];
@@ -128,8 +119,6 @@
               serviceConfig = {
                 ExecStart = "${pkgs.systemd-exporterd}/bin/systemd-exporterd";
                 RemainAfterExit = "no";
-                User = user;
-                Group = user;
                 ProtectSystem = "full";
                 PrivateTmp = "yes";
               };
